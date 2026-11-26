@@ -38,6 +38,7 @@ const Game = (function buildMainModule() {
     Terrain.buildBoats(scene);
     Terrain.buildLighthouse(scene);
     Terrain.buildPalms(scene);
+    Life.build(scene);
     plane = Aircraft.buildAircraft(scene);
     Rings.buildRings(scene);
     Rings.buildMarkers(scene);
@@ -183,6 +184,7 @@ const Game = (function buildMainModule() {
     Rings.update(dt, clock);
     Sky.update(dt, clock);
     Terrain.updateSea(dt, clock);
+    Life.update(dt, clock);
     AudioSys.update(p.throttle, p.speed);
     updateCamera(rawDt || dt);
     HUD.update(dt, clock);

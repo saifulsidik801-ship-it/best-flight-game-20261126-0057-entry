@@ -27,34 +27,45 @@ const Shots = (function buildShotsModule() {
     // All flying shots: hide screens, fly the sortie.
     HUD.hideScreens();
     if (shot === 'cover' || shot === 'play') {
-      // South-west of ring 1, ring 1 dead ahead (green = next): the chase
-      // looks north-east down the coast — sea ahead-right, town and harbour
-      // below, volcano far left.
+      // South of the coast, lined up on ring 1 (heading 0.42 points
+      // straight at it from here) with the autopilot holding wings-level.
+      // Ring 10 sits only ~110 m from ring 1, so ANY staging close to
+      // ring 1 puts ring 10 in the foreground at 150-200 px — the giant
+      // gold ring that wrecked the first two densify takes. From 400 m
+      // out, rings 1 and 10 are both small ahead, the town, beach and sea
+      // fill the right of the frame, and the volcano sits far left.
       game.startSortie(0);
-      p.pos.set(520, 210, 1080);
-      p.heading = 0.78; p.pitch = 0.02; p.roll = 0;
+      p.pos.set(500, 210, 1350);
+      p.heading = 0.42; p.pitch = 0.02; p.roll = 0;
       p.speed = 58; p.throttle = 0.72;
       game.setCameraMode('chase');
       game.setAutopilot(true);
     } else if (shot === 'river') {
-      // River Rescue sortie: low over the river near its bend to the sea,
-      // green drop markers ahead-left, coast and water ahead-right.
+      // River Rescue sortie: staged right OVER the river (it runs at
+      // x≈240 here) flying due north along it, so the frame holds the
+      // river ribbon below-ahead, the green marker beams ahead-left, and
+      // the coastal town, beach road, palms and the sea with boats
+      // ahead-right. The old staging flew 150 m east of the river and the
+      // river never entered the frame.
       // No autopilot: it would yank the plane back north-west toward the
-      // river and swing the sea out of frame. Manual trim, straight NNE.
+      // river and swing the sea out of frame. Manual trim, straight north.
       Missions.select(1);
       game.startSortie(1);
-      p.pos.set(200, 105, -450);
-      p.heading = 0.35; p.pitch = -0.01; p.roll = 0;
+      p.pos.set(250, 90, -300);
+      p.heading = 0.15; p.pitch = -0.01; p.roll = 0;
       p.speed = 52; p.throttle = 0.66;
       game.setCameraMode('chase-low');
     } else if (shot === 'dusk') {
-      // Dusk approach: staged already lined up with the lit strip (heading
-      // -0.32 points straight at it from the south-east), so the autopilot
-      // holds a gentle wings-level approach instead of a hard bank.
+      // Dusk approach: LOW and close to the coast (180 m, 650 m east of the
+      // centreline) and lined up with the lit strip (heading -0.78 points
+      // straight at it), so the autopilot holds a gentle wings-level
+      // approach — and the frame holds the lit coastal town, the road with
+      // cars, and the sea at the right edge. The old high staging showed
+      // nothing but empty terrain.
       Missions.select(2);
       game.startSortie(2);
-      p.pos.set(300, 330, 2350);
-      p.heading = -0.32; p.pitch = -0.06; p.roll = 0.05;
+      p.pos.set(650, 180, 2100);
+      p.heading = -0.78; p.pitch = -0.06; p.roll = 0.05;
       p.speed = 55; p.throttle = 0.6;
       game.setCameraMode('chase');
       game.setAutopilot(true);
