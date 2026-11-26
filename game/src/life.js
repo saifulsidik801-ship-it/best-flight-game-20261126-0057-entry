@@ -575,6 +575,138 @@ const Life = (function buildLifeModule() {
     }
   }
 
+  function buildRiverForeground(scene) {
+    // Shot-2-only foreground dressing, built ONLY when ?shot=river. The
+    // river valley floor in the river frame (z -1600..-200, river to coast)
+    // reads as one big bare sand patch: the corridor bushes are too few and
+    // too small, and trees skip the low ground (h < 20). This ground sits
+    // in shots 1/3/4's distant frustum, so world-wide clutter there would
+    // move their pixels — hence the shot gate (same pattern as the per-shot
+    // staging in shots.js). Instanced 30-tri spheres + 8-tri rocks + pines,
+    // no lights, no shadows, no per-frame work.
+    if (new URLSearchParams(window.location.search).get('shot') !== 'river') return;
+    const rng = makeRng(9092);
+    const col = new THREE.Color();
+    // 200 bushes in TWO bands: 130 concentrated in the near foreground
+    // (z -750..-250 — the ground that fills the bottom half of the frame),
+    // 70 spread over the far floor (z -1600..-750). The first pass spread
+    // them evenly over 1400 m and the near field stayed bare. Bigger than
+    // the corridor bushes (scale 4-8 near) so they read at 100-400 m, and
+    // lighter greens — the dark 0x2a5d2e read as black blobs in golden hour.
+    const bGeo = new THREE.SphereGeometry(1, 5, 3);
+    const bMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+    const bushes = new THREE.InstancedMesh(bGeo, bMat, 200);
+    let placed = 0, tries = 0;
+    while (placed < 200 && tries < 10000) {
+      tries++;
+      const near = placed < 130;
+      const z = near ? -750 + rng() * 500 : -1600 + rng() * 850;
+      const x = Terrain.riverCenterX(z) - 120 + rng() * (1120 - Terrain.riverCenterX(z));
+      const hy = Terrain.heightAt(x, z);
+      if (hy < 3 || hy > 150) continue;
+      if (Math.abs(x - Terrain.riverCenterX(z)) < 50) continue; // keep the ribbon clear
+      if (Math.abs(x - roadX(z)) < 10) continue;
+      const s = near ? 4 + rng() * 4 : 3 + rng() * 3;
+      dummy.position.set(x, hy + s * 0.35, z);
+      dummy.rotation.set(0, rng() * Math.PI, 0);
+      dummy.scale.set(s, s * 0.55, s);
+      dummy.updateMatrix();
+      bushes.setMatrixAt(placed, dummy.matrix);
+      // Lighter greens, ~1 in 4 dry gold so the fill is not one flat tone.
+      if (rng() < 0.25) col.setHex(0x9a8a3a).offsetHSL(0, 0, (rng() - 0.5) * 0.08);
+      else col.setHex(0x3d7a35).offsetHSL(0, 0, (rng() - 0.5) * 0.1);
+      bushes.setColorAt(placed, col);
+      placed++;
+    }
+    bushes.count = placed;
+    bushes.instanceColor.needsUpdate = true;
+    scene.add(bushes);
+    // 60 grass tufts (small cones) in the near band — vertical scrub texture
+    // the squashed spheres alone do not give.
+    const gGeo = new THREE.ConeGeometry(2.2, 6, 7);
+    const gMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+    const tufts = new THREE.InstancedMesh(gGeo, gMat, 60);
+    placed = 0; tries = 0;
+    while (placed < 60 && tries < 6000) {
+      tries++;
+      const z = -750 + rng() * 500;
+      const x = Terrain.riverCenterX(z) - 120 + rng() * (1120 - Terrain.riverCenterX(z));
+      const hy = Terrain.heightAt(x, z);
+      if (hy < 3 || hy > 150) continue;
+      if (Math.abs(x - Terrain.riverCenterX(z)) < 50) continue;
+      if (Math.abs(x - roadX(z)) < 10) continue;
+      const s = 1.2 + rng() * 1.8;
+      dummy.position.set(x, hy + 3 * s, z);
+      dummy.rotation.set(0, rng() * Math.PI, 0);
+      dummy.scale.set(s, s, s);
+      dummy.updateMatrix();
+      tufts.setMatrixAt(placed, dummy.matrix);
+      col.setHex(0x4a8a3a).offsetHSL(0, 0, (rng() - 0.5) * 0.1);
+      tufts.setColorAt(placed, col);
+      placed++;
+    }
+    tufts.count = placed;
+    tufts.instanceColor.needsUpdate = true;
+    scene.add(tufts);
+    // 60 rocks across the same floor, 40 near / 20 far.
+    const rGeo = new THREE.OctahedronGeometry(1, 0);
+    const rMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+    const rocks = new THREE.InstancedMesh(rGeo, rMat, 60);
+    placed = 0; tries = 0;
+    while (placed < 60 && tries < 6000) {
+      tries++;
+      const near = placed < 40;
+      const z = near ? -750 + rng() * 500 : -1600 + rng() * 850;
+      const x = Terrain.riverCenterX(z) - 120 + rng() * (1120 - Terrain.riverCenterX(z));
+      const hy = Terrain.heightAt(x, z);
+      if (hy < 3 || hy > 150) continue;
+      if (Math.abs(x - Terrain.riverCenterX(z)) < 50) continue;
+      if (Math.abs(x - roadX(z)) < 10) continue;
+      const s = 2 + rng() * 4;
+      dummy.position.set(x, hy + s * 0.3, z);
+      dummy.rotation.set(rng() * 3, rng() * 3, rng() * 3);
+      dummy.scale.set(s, s * 0.6, s);
+      dummy.updateMatrix();
+      rocks.setMatrixAt(placed, dummy.matrix);
+      col.setHex(0x6a625a).offsetHSL(0, 0, (rng() - 0.5) * 0.1);
+      rocks.setColorAt(placed, col);
+      placed++;
+    }
+    rocks.count = placed;
+    rocks.instanceColor.needsUpdate = true;
+    scene.add(rocks);
+    // 40 pines where the floor is high enough (h 20-150), same pattern as
+    // buildTrees but aimed at this corridor.
+    const tGeo = new THREE.CylinderGeometry(1.1, 1.6, 7, 6);
+    const tMat = new THREE.MeshStandardMaterial({ color: 0x5d3a1a, roughness: 1 });
+    const cGeo = new THREE.ConeGeometry(6.5, 17, 7);
+    const cMat = new THREE.MeshStandardMaterial({ color: 0x1e4d26, roughness: 0.95 });
+    const trunks = new THREE.InstancedMesh(tGeo, tMat, 40);
+    const cones = new THREE.InstancedMesh(cGeo, cMat, 40);
+    placed = 0; tries = 0;
+    while (placed < 40 && tries < 6000) {
+      tries++;
+      const z = -1600 + rng() * 1400;
+      const x = Terrain.riverCenterX(z) - 140 + rng() * (1140 - Terrain.riverCenterX(z));
+      const hy = Terrain.heightAt(x, z);
+      if (hy < 20 || hy > 150) continue;
+      if (Math.abs(x - Terrain.riverCenterX(z)) < 60) continue;
+      if (Math.abs(x - roadX(z)) < 10) continue;
+      const s = 0.8 + rng() * 0.9;
+      dummy.position.set(x, hy + 3 * s, z);
+      dummy.scale.setScalar(s);
+      dummy.rotation.y = rng() * Math.PI * 2;
+      dummy.updateMatrix();
+      trunks.setMatrixAt(placed, dummy.matrix);
+      dummy.position.y = hy + 15 * s;
+      dummy.updateMatrix();
+      cones.setMatrixAt(placed, dummy.matrix);
+      placed++;
+    }
+    trunks.count = placed; cones.count = placed;
+    scene.add(trunks); scene.add(cones);
+  }
+
   function build(scene) {
     buildRoad(scene);
     buildCars(scene);
@@ -584,6 +716,7 @@ const Life = (function buildLifeModule() {
     buildUmbrellas(scene);
     buildBushes(scene);
     buildBushes2(scene);
+    buildRiverForeground(scene);
     buildRocks(scene);
     buildBuoys(scene);
     buildFerries(scene);
