@@ -35,36 +35,42 @@ const Shots = (function buildShotsModule() {
       // out, rings 1 and 10 are both small ahead, the town, beach and sea
       // fill the right of the frame, and the volcano sits far left.
       game.startSortie(0);
-      p.pos.set(500, 210, 1350);
+      p.pos.set(520, 190, 1300);
       p.heading = 0.42; p.pitch = 0.02; p.roll = 0;
       p.speed = 58; p.throttle = 0.72;
       game.setCameraMode('chase');
       game.setAutopilot(true);
     } else if (shot === 'river') {
       // River Rescue sortie: staged right OVER the river (it runs at
-      // x≈240 here) flying due north along it, so the frame holds the
-      // river ribbon below-ahead, the green marker beams ahead-left, and
-      // the coastal town, beach road, palms and the sea with boats
-      // ahead-right. The old staging flew 150 m east of the river and the
-      // river never entered the frame.
+      // x≈240 here) flying due north along it, LOW (68 m) and banked 0.22
+      // so the frame holds the river ribbon below-ahead, the bridge and
+      // the green marker beams ahead-left, and the coastal town, beach
+      // road, palms and the sea with boats ahead-right.
+      // STAGING ACCOUNTS FOR CAPTURE DRIFT: physics keeps running during
+      // the settle, and the shutter fires ~5-6 game-seconds after staging
+      // (HUD TIME 0:05-0:06 on the VM) — the plane flies ~230 m north in
+      // that time. So the plane is staged ~230 m SOUTH of where it must
+      // be at capture: (206, 68, -29) puts it over the river at (240, ~64,
+      // -260) when the shutter fires, with the trestle bridge 90 m ahead.
+      // (The v2 staging at -260 put the bridge 160 m BEHIND the plane at
+      // capture — that is why no bridge ever appeared in shot 2.)
       // No autopilot: it would yank the plane back north-west toward the
       // river and swing the sea out of frame. Manual trim, straight north.
       Missions.select(1);
       game.startSortie(1);
-      p.pos.set(250, 90, -300);
-      p.heading = 0.15; p.pitch = -0.01; p.roll = 0;
+      p.pos.set(206, 68, -29);
+      p.heading = 0.15; p.pitch = -0.01; p.roll = 0.22;
       p.speed = 52; p.throttle = 0.66;
       game.setCameraMode('chase-low');
     } else if (shot === 'dusk') {
-      // Dusk approach: LOW and close to the coast (180 m, 650 m east of the
-      // centreline) and lined up with the lit strip (heading -0.78 points
-      // straight at it), so the autopilot holds a gentle wings-level
-      // approach — and the frame holds the lit coastal town, the road with
-      // cars, and the sea at the right edge. The old high staging showed
-      // nothing but empty terrain.
+      // Dusk approach: LOW and close to the strip (150 m, 430 m out) and
+      // lined up with the lit strip (heading -0.78 points straight at it),
+      // so the frame holds the approach lights, the PAPI and the lit strip
+      // BIG, the smoking volcano behind-left, and the coastal town and sea
+      // at the right edge. The old 650 m staging showed the strip as a smudge.
       Missions.select(2);
       game.startSortie(2);
-      p.pos.set(650, 180, 2100);
+      p.pos.set(430, 150, 1980);
       p.heading = -0.78; p.pitch = -0.06; p.roll = 0.05;
       p.speed = 55; p.throttle = 0.6;
       game.setCameraMode('chase');

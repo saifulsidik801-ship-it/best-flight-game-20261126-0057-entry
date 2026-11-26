@@ -3,8 +3,20 @@
 // extruded wing profile, spinning prop, lit instruments and nav lights.
 
 const Aircraft = (function buildAircraftModule() {
-  let plane, prop, panelLights = [], navLights = {};
+  let plane, prop, propDisc, panelLights = [], navLights = {};
   let gearDown = true;
+
+  // Soft radial glow texture for nav-light halos (one shared canvas).
+  function glowTexture() {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+  }
 
   function buildAircraft(scene) {
     plane = new THREE.Group();
@@ -23,7 +35,7 @@ const Aircraft = (function buildAircraftModule() {
     const fusGeo = new THREE.LatheGeometry(profile, 20);
     fusGeo.rotateX(Math.PI / 2); // lathe axis → forward (+Z)
     const fusMat = new THREE.MeshStandardMaterial({
-      color: 0xd84a2e, roughness: 0.32, metalness: 0.55,
+      color: 0xd84a2e, roughness: 0.38, metalness: 0.22,
     });
     const fus = new THREE.Mesh(fusGeo, fusMat);
     fus.castShadow = true;
@@ -49,7 +61,7 @@ const Aircraft = (function buildAircraftModule() {
     wingShape.lineTo(0, 0);
     const wingGeo = new THREE.ExtrudeGeometry(wingShape, { depth: 0.22, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 2 });
     wingGeo.rotateX(-Math.PI / 2);
-    const wingMat = new THREE.MeshStandardMaterial({ color: 0xf5e9c8, roughness: 0.45, metalness: 0.35 });
+    const wingMat = new THREE.MeshStandardMaterial({ color: 0xf5e9c8, roughness: 0.5, metalness: 0.2 });
     const wingR = new THREE.Mesh(wingGeo, wingMat);
     wingR.position.set(0.6, 0.15, 0.4);
     wingR.castShadow = true;
@@ -74,9 +86,43 @@ const Aircraft = (function buildAircraftModule() {
     finShape.moveTo(0, 0); finShape.lineTo(1.5, 0.15); finShape.lineTo(1.9, 1.9);
     finShape.lineTo(1.55, 2.1); finShape.lineTo(0.1, 2.0); finShape.lineTo(0, 0);
     const finGeo = new THREE.ExtrudeGeometry(finShape, { depth: 0.14, bevelEnabled: false });
-    const fin = new THREE.Mesh(finGeo, new THREE.MeshStandardMaterial({ color: 0xd84a2e, roughness: 0.4, metalness: 0.5 }));
+    const fin = new THREE.Mesh(finGeo, new THREE.MeshStandardMaterial({ color: 0xd84a2e, roughness: 0.42, metalness: 0.25 }));
     fin.position.set(-0.07, 0.6, -5.1);
     plane.add(fin);
+    // White flash on the fin + red wingtip caps: livery the chase camera reads.
+    const finFlash = new THREE.Mesh(
+      new THREE.BoxGeometry(0.2, 1.1, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0xf5e9c8, roughness: 0.5, metalness: 0.2 }),
+    );
+    finFlash.position.set(0, 1.5, -4.35);
+    finFlash.rotation.x = 0.35;
+    plane.add(finFlash);
+    const tipMat = new THREE.MeshStandardMaterial({ color: 0xc23b2a, roughness: 0.45, metalness: 0.25 });
+    for (const s of [-1, 1]) {
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.34, 1.3), tipMat);
+      tip.position.set(s * 7.9, 0.18, 0.4);
+      plane.add(tip);
+    }
+    // Belly antenna mast + tailwheel: small built details.
+    const mast = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.07, 1.3, 6),
+      new THREE.MeshStandardMaterial({ color: 0x2a2a30, roughness: 0.6, metalness: 0.4 }),
+    );
+    mast.position.set(0, 1.9, -0.6);
+    plane.add(mast);
+    const tailStrut = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.09, 0.09, 1.1, 6),
+      new THREE.MeshStandardMaterial({ color: 0x2a2a30, roughness: 0.6, metalness: 0.5 }),
+    );
+    tailStrut.position.set(0, -1.15, -4.9);
+    plane.add(tailStrut);
+    const tailWheel = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.32, 0.32, 0.24, 10),
+      new THREE.MeshStandardMaterial({ color: 0x1c1c22, roughness: 0.7, metalness: 0.4 }),
+    );
+    tailWheel.rotation.z = Math.PI / 2;
+    tailWheel.position.set(0, -1.7, -4.9);
+    plane.add(tailWheel);
 
     // Canopy: glossy dark glass over the cabin.
     const canopy = new THREE.Mesh(
@@ -129,6 +175,17 @@ const Aircraft = (function buildAircraftModule() {
     propGroup.position.z = 4.9;
     plane.add(propGroup);
     prop = propGroup;
+    // Spinning-prop blur disc: at speed the blades fade and this translucent
+    // disc reads as a prop in motion, not a black X.
+    propDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(1.95, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0x3a3a44, transparent: true, opacity: 0,
+        side: THREE.DoubleSide, depthWrite: false,
+      }),
+    );
+    propDisc.position.z = 4.95;
+    plane.add(propDisc);
 
     // Nav lights: red port, green starboard, white tail — real glow pools.
     const mkLight = (color, x, y, z) => {
@@ -146,6 +203,21 @@ const Aircraft = (function buildAircraftModule() {
     navLights.port = mkLight(0xff2a2a, -8.0, 0.2, 0.4);
     navLights.starboard = mkLight(0x2aff5d, 8.0, 0.2, 0.4);
     navLights.tail = mkLight(0xffffff, 0, 0.6, -5.4);
+    // Glow halos around the nav lights so they read at chase distance, dusk included.
+    const haloTex = glowTexture();
+    const mkHalo = (color, x, y, z, s) => {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: haloTex, color, transparent: true, opacity: 0.85,
+        blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+      }));
+      sp.position.set(x, y, z);
+      sp.scale.set(s, s, 1);
+      plane.add(sp);
+      return sp;
+    };
+    mkHalo(0xff2a2a, -8.0, 0.2, 0.4, 3.2);
+    mkHalo(0x2aff5d, 8.0, 0.2, 0.4, 3.2);
+    mkHalo(0xffffff, 0, 0.6, -5.4, 2.6);
 
     // Landing gear: fixed, with wheels.
     const gearMat = new THREE.MeshStandardMaterial({ color: 0x2a2a30, roughness: 0.6, metalness: 0.5 });
@@ -186,11 +258,16 @@ const Aircraft = (function buildAircraftModule() {
 
   function update(dt, throttle, speed, t) {
     if (!plane) return;
-    // Prop spins faster with throttle; blades blur into a disc at speed.
+    // Prop spins faster with throttle; blades fade into the blur disc at speed.
     const spin = 6 + throttle * 34;
     prop.rotation.z += spin * dt;
-    prop.children.forEach((b, i) => {
-      if (b.geometry && b.geometry.type === 'BoxGeometry') b.material.transparent = throttle > 0.75;
+    const discOn = throttle > 0.5;
+    if (propDisc) propDisc.material.opacity = discOn ? 0.16 : 0;
+    prop.children.forEach((b) => {
+      if (b.geometry && b.geometry.type === 'BoxGeometry') {
+        b.material.transparent = discOn;
+        b.material.opacity = discOn ? 0.25 : 1;
+      }
     });
     // Nav lights strobe gently; tail light double-blinks like a real beacon.
     const blink = (Math.sin(t * 6) > 0.6) ? 1 : 0.25;
@@ -202,7 +279,7 @@ const Aircraft = (function buildAircraftModule() {
   }
 
   function setLandingLight(on) {
-    if (navLights.beam) navLights.beam.intensity = on ? 3.2 : 0;
+    if (navLights.beam) navLights.beam.intensity = on ? 4.5 : 0;
   }
 
   function getPlane() { return plane; }

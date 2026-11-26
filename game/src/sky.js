@@ -48,6 +48,24 @@ const Sky = (function buildSkyModule() {
     sunMesh.lookAt(0, 0, 0);
     scene.add(sunMesh);
 
+    // Sun halo: a big soft additive glow so the sun reads as a burning disc,
+    // not a flat white circle.
+    const haloCanvas = document.createElement('canvas');
+    haloCanvas.width = haloCanvas.height = 128;
+    const hg = haloCanvas.getContext('2d');
+    const hgrad = hg.createRadialGradient(64, 64, 0, 64, 64, 64);
+    hgrad.addColorStop(0, 'rgba(255,230,170,0.9)');
+    hgrad.addColorStop(0.4, 'rgba(255,180,90,0.35)');
+    hgrad.addColorStop(1, 'rgba(255,150,60,0)');
+    hg.fillStyle = hgrad; hg.fillRect(0, 0, 128, 128);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(haloCanvas), color: 0xffc46b, transparent: true,
+      opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+    }));
+    halo.position.copy(sunMesh.position);
+    halo.scale.set(2600, 2600, 1);
+    scene.add(halo);
+
     // Key light: warm, low, long shadows.
     sunLight = new THREE.DirectionalLight(CONFIG.sunColor, CONFIG.sunIntensity);
     sunLight.position.set(-2200, 1100, -3100);
@@ -80,17 +98,20 @@ const Sky = (function buildSkyModule() {
     const mat = new THREE.MeshBasicMaterial({
       color: 0xffe8d8, transparent: true, opacity: 0.82,
     });
-    for (let i = 0; i < 16; i++) {
+    const matWarm = new THREE.MeshBasicMaterial({
+      color: 0xffd2b0, transparent: true, opacity: 0.78,
+    });
+    for (let i = 0; i < 26; i++) {
       const cloud = new THREE.Group();
       const puffs = 4 + Math.floor(rng() * 4);
       for (let p = 0; p < puffs; p++) {
-        const r = 34 + rng() * 46;
-        const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 10), mat);
-        puff.position.set((rng() - 0.5) * 220, (rng() - 0.5) * 22, (rng() - 0.5) * 90);
+        const r = 40 + rng() * 60;
+        const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 10), i % 2 ? matWarm : mat);
+        puff.position.set((rng() - 0.5) * 260, (rng() - 0.5) * 26, (rng() - 0.5) * 110);
         puff.scale.y = 0.42;
         cloud.add(puff);
       }
-      cloud.position.set((rng() - 0.5) * 5200, 520 + rng() * 320, (rng() - 0.5) * 5200);
+      cloud.position.set((rng() - 0.5) * 5200, 400 + rng() * 460, (rng() - 0.5) * 5200);
       cloud.userData.drift = 2.5 + rng() * 4;
       scene.add(cloud);
       clouds.push(cloud);
@@ -105,9 +126,9 @@ const Sky = (function buildSkyModule() {
       u.topColor.value.setHex(0x1c2447);
       u.midColor.value.setHex(0x8a3d5c);
       u.lowColor.value.setHex(0xff7a3c);
-      sunLight.intensity = 1.5;
+      sunLight.intensity = 1.7;
       sunLight.color.setHex(0xff8a4d);
-      hemi.intensity = 0.45;
+      hemi.intensity = 0.8; // dusk fill: the plane must not silhouette black
     } else {
       u.topColor.value.setHex(CONFIG.skyTop);
       u.midColor.value.setHex(CONFIG.skyMid);

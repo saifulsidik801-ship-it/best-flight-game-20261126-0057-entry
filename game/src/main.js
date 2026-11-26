@@ -204,7 +204,7 @@ const Game = (function buildMainModule() {
       camera.lookAt(p.pos.clone().addScaledVector(fwd, 120).add(new THREE.Vector3(0, 1.0, 0)));
       camera.rotation.z += -p.roll * 0.55;
     } else if (cameraMode === 'chase-low') {
-      const eye = p.pos.clone().addScaledVector(fwd, -20).add(new THREE.Vector3(0, 4.5, 0));
+      const eye = p.pos.clone().addScaledVector(fwd, -16).add(new THREE.Vector3(0, 4, 0));
       camera.position.lerp(eye, snap);
       camera.lookAt(p.pos.clone().addScaledVector(fwd, 90).add(new THREE.Vector3(0, 1.5, 0)));
     } else if (cameraMode === 'title-fixed') {
@@ -223,9 +223,10 @@ const Game = (function buildMainModule() {
       camera.position.lerp(eye, settle > 0 ? 1 : Math.min(1, dt * 2.5));
       camera.lookAt(p.pos.x, p.pos.y + 2, p.pos.z);
     } else {
-      // Chase: behind, above, slightly to the side — aircraft in frame, world ahead.
-      const eye = p.pos.clone().addScaledVector(fwd, -24).add(new THREE.Vector3(0, 7.5, 0))
-        .addScaledVector(right, 3.5);
+      // Chase: closer than v2 (18 m back, 6.2 up) — the aircraft fills the
+      // frame and reads as built, not a toy on the horizon.
+      const eye = p.pos.clone().addScaledVector(fwd, -18).add(new THREE.Vector3(0, 6.2, 0))
+        .addScaledVector(right, 3.0);
       camera.position.lerp(eye, snap);
       camera.lookAt(p.pos.clone().addScaledVector(fwd, 90).add(new THREE.Vector3(0, 2.5, 0)));
     }

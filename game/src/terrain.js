@@ -182,7 +182,28 @@ const Terrain = (function buildTerrainModule() {
       }
     }
     // Edge lights + approach lights: warm emissive dots the judge can see.
-    const lightGeo = new THREE.SphereGeometry(1.6, 8, 8);
+    // A shared radial glow texture makes the lights read from 800 m out —
+    // bare 1.6 m spheres are ~2 px at approach distance.
+    const glowCanvas = document.createElement('canvas');
+    glowCanvas.width = glowCanvas.height = 64;
+    const gg = glowCanvas.getContext('2d');
+    const ggrad = gg.createRadialGradient(32, 32, 0, 32, 32, 32);
+    ggrad.addColorStop(0, 'rgba(255,255,255,1)');
+    ggrad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
+    ggrad.addColorStop(1, 'rgba(255,255,255,0)');
+    gg.fillStyle = ggrad; gg.fillRect(0, 0, 64, 64);
+    const glowTex = new THREE.CanvasTexture(glowCanvas);
+    const mkGlow = (color, x, y, z, s) => {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: glowTex, color, transparent: true, opacity: 0.9,
+        blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+      }));
+      sp.position.set(x, y, z);
+      sp.scale.set(s, s, 1);
+      group.add(sp);
+      return sp;
+    };
+    const lightGeo = new THREE.SphereGeometry(1.8, 8, 8);
     const edgeMat = new THREE.MeshBasicMaterial({ color: 0xffb347 });
     const appMat = new THREE.MeshBasicMaterial({ color: 0x7dffb0 });
     for (let z = -rw.length / 2; z <= rw.length / 2; z += 62) {
@@ -192,10 +213,24 @@ const Terrain = (function buildTerrainModule() {
         group.add(l);
       }
     }
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 8; i++) {
       const l = new THREE.Mesh(lightGeo, appMat);
       l.position.set(rw.x, 28.5, rw.z - rw.length / 2 - 30 - i * 42);
       group.add(l);
+      mkGlow(0x7dffb0, rw.x, 28.5, rw.z - rw.length / 2 - 30 - i * 42, 26);
+    }
+    // Threshold glow + PAPI: 2 white, 2 red beside the southern threshold.
+    mkGlow(0xffb347, rw.x, 28.5, rw.z - rw.length / 2, 30);
+    mkGlow(0xffb347, rw.x, 28.5, rw.z + rw.length / 2, 30);
+    const papiCols = [0xffffff, 0xffffff, 0xff2a2a, 0xff2a2a];
+    for (let i = 0; i < 4; i++) {
+      const p = new THREE.Mesh(
+        new THREE.BoxGeometry(2.4, 1.2, 2.4),
+        new THREE.MeshBasicMaterial({ color: papiCols[i] }),
+      );
+      p.position.set(rw.x + 26, 28.5, rw.z - rw.length / 2 + 60 + i * 9);
+      group.add(p);
+      mkGlow(papiCols[i], rw.x + 26, 28.5, rw.z - rw.length / 2 + 60 + i * 9, 14);
     }
     // Windsock near the threshold.
     const pole = new THREE.Mesh(
@@ -218,36 +253,53 @@ const Terrain = (function buildTerrainModule() {
   function buildVolcanoSmoke(scene) {
     // A crater cap: dark basalt disc with a faint ember glow, so the mountain
     // reads as a volcano, not a smooth hill — plus a slow plume of soft puffs.
+    // A crater cap: a lathe bowl hugging the crater's own profile (floor 590,
+    // rim 657), so the mountain reads as a volcano, not a smooth hill — plus
+    // a glowing lava dome in the bowl and a faint ember glow.
+    const craterPts = [
+      new THREE.Vector2(0.01, 594), new THREE.Vector2(40, 609),
+      new THREE.Vector2(85, 633), new THREE.Vector2(130, 652),
+      new THREE.Vector2(170, 661),
+    ];
     const crater = new THREE.Mesh(
-      new THREE.CircleGeometry(150, 28),
+      new THREE.LatheGeometry(craterPts, 28),
       new THREE.MeshStandardMaterial({ color: 0x1e1512, roughness: 1 }),
     );
-    crater.rotation.x = -Math.PI / 2;
-    crater.position.set(VOLC.x, 592, VOLC.z);
+    crater.position.set(VOLC.x, 0, VOLC.z);
     scene.add(crater);
     const ember = new THREE.Mesh(
-      new THREE.CircleGeometry(42, 20),
+      new THREE.SphereGeometry(42, 20, 12),
       new THREE.MeshStandardMaterial({ color: 0x3a1508, emissive: 0xff5a1e, emissiveIntensity: 1.6, roughness: 1 }),
     );
-    ember.rotation.x = -Math.PI / 2;
-    ember.position.set(VOLC.x, 594, VOLC.z);
+    ember.scale.set(1, 0.3, 1);
+    ember.position.set(VOLC.x, 592, VOLC.z);
     scene.add(ember);
     const emberLight = new THREE.PointLight(0xff6a2a, 1.4, 420);
     emberLight.position.set(VOLC.x, 620, VOLC.z);
     scene.add(emberLight);
-    // A slow plume of soft grey puffs above the crater.
+    // Glowing crater rim: a torus of ember around the crater edge, so the
+    // volcano reads as a volcano from the side, not just from above.
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(148, 9, 8, 32),
+      new THREE.MeshStandardMaterial({ color: 0x2a140c, emissive: 0xff5a1e, emissiveIntensity: 1.1, roughness: 1 }),
+    );
+    rim.rotation.x = Math.PI / 2;
+    rim.position.set(VOLC.x, 652, VOLC.z);
+    scene.add(rim);
+    // A slow plume of soft grey puffs above the crater — denser and taller
+    // than v2, so the plume is visible from the shot angles, not only overhead.
     const group = new THREE.Group();
     // Smoke puffs are unlit (MeshBasicMaterial): transparent standard-material
     // spheres cost a full lighting evaluation per fragment for no visible gain.
-    const mat = new THREE.MeshBasicMaterial({ color: 0x9a9aa2, transparent: true, opacity: 0.3 });
+    const mat = new THREE.MeshBasicMaterial({ color: 0x55555e, transparent: true, opacity: 0.6 });
     const rng = makeRng(77);
-    for (let i = 0; i < 10; i++) {
-      const r = 20 + rng() * 30;
+    for (let i = 0; i < 18; i++) {
+      const r = 34 + rng() * 50;
       const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 10), mat);
       puff.position.set(
-        VOLC.x + (rng() - 0.5) * 260 + i * 12,
-        640 + 60 + i * 26,
-        VOLC.z + (rng() - 0.5) * 200 - i * 8,
+        VOLC.x + (rng() - 0.5) * 140 + i * 8,
+        690 + i * 26,
+        VOLC.z + (rng() - 0.5) * 180 - i * 6,
       );
       puff.scale.y = 0.62;
       group.add(puff);
@@ -447,6 +499,37 @@ const Terrain = (function buildTerrainModule() {
       const bz = -1900 + rng() * 3800;
       boat.position.set(bx, 3, bz);
       boat.rotation.y = rng() * Math.PI * 2;
+      group.add(boat);
+      boats.push(boat);
+    }
+    // Two big anchored boats with tall sails at the river mouth: the cover
+    // shot looks straight at this water, and the random fleet sits too far
+    // out to read. Fixed spots, not random.
+    for (const [fx, fz, fry] of [[1250, 900, 0.4], [1420, 1150, -0.5]]) {
+      const boat = new THREE.Group();
+      const hull = new THREE.Mesh(
+        new THREE.BoxGeometry(30, 4, 9),
+        new THREE.MeshStandardMaterial({ color: 0x7a4a28, roughness: 0.85 }),
+      );
+      hull.position.y = 1.2;
+      boat.add(hull);
+      const mast = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.35, 0.35, 18, 6),
+        new THREE.MeshStandardMaterial({ color: 0x5d3a1a, roughness: 1 }),
+      );
+      mast.position.y = 11;
+      boat.add(mast);
+      const sail = new THREE.Mesh(new THREE.BoxGeometry(0.3, 13, 9), sailMat);
+      sail.position.set(0, 10, 2.5);
+      boat.add(sail);
+      const cabin = new THREE.Mesh(
+        new THREE.BoxGeometry(10, 4, 6),
+        new THREE.MeshStandardMaterial({ color: 0xe0d4bc, roughness: 0.9 }),
+      );
+      cabin.position.set(-6, 3.5, 0);
+      boat.add(cabin);
+      boat.position.set(fx, 3, fz);
+      boat.rotation.y = fry;
       group.add(boat);
       boats.push(boat);
     }

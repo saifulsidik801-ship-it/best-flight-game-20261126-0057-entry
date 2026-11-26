@@ -94,6 +94,12 @@ const HUD = (function buildHudModule() {
 
   function showEnd(ms) {
     el('titleScreen').style.display = 'none';
+    // The end screen carries the result itself: kill the centre banner or
+    // the two titles stack in the middle of the frame (v3 shot 4 showed
+    // "SORTIE COMPLETE" over "TOUCHDOWN — WELCOME HOME · GREASED IT").
+    if (msgTimer) { clearTimeout(msgTimer); msgTimer = null; }
+    el('centerMsg').style.opacity = 0;
+    Missions.clearEvent();
     const end = el('endScreen');
     end.style.display = 'flex';
     el('endTitle').textContent = ms.won ? 'SORTIE COMPLETE' : 'SORTIE FAILED';

@@ -61,6 +61,14 @@ const Rings = (function buildRingsModule() {
     highlightNext();
   }
 
+  // Goals show only for their own sortie: rings in Ring Run, markers in
+  // River Rescue, neither in Dusk Landing — v2 leaked green marker beams
+  // and gold rings into the wrong shots.
+  function setGoalsVisible(type) {
+    if (ringGroup) ringGroup.visible = (type === 'rings');
+    markers.forEach((m) => { m.visible = (type === 'crates'); });
+  }
+
   // Returns the ring index if the plane just passed through it, else -1.
   function checkPass(pos) {
     if (nextRing >= rings.length) return -1;
@@ -107,12 +115,34 @@ const Rings = (function buildRingsModule() {
       );
       pad.position.y = 0.6;
       grp.add(pad);
-      const beam = new THREE.Mesh(
-        new THREE.CylinderGeometry(2.2, 2.2, 90, 8, 1, true),
-        new THREE.MeshBasicMaterial({ color: 0x7dffb0, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }),
+      // Ground ring around the pad: the target reads from the air.
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(18, 1.1, 8, 32),
+        new THREE.MeshBasicMaterial({ color: 0x7dffb0 }),
       );
-      beam.position.y = 45;
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = 1.4;
+      grp.add(ring);
+      // A crate stack waiting on the pad: the drop has something to land on.
+      const crateMat = new THREE.MeshStandardMaterial({ color: 0xc98f4a, roughness: 0.9 });
+      const crateMat2 = new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.9 });
+      const c1 = new THREE.Mesh(new THREE.BoxGeometry(5, 5, 5), crateMat);
+      c1.position.set(-3, 3.7, 2);
+      grp.add(c1);
+      const c2 = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4), crateMat2);
+      c2.position.set(3.5, 3.2, -2.5);
+      grp.add(c2);
+      const c3 = new THREE.Mesh(new THREE.BoxGeometry(3.4, 3.4, 3.4), crateMat);
+      c3.position.set(-2.5, 8.7, 1.5);
+      grp.add(c3);
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(4, 4, 110, 8, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0x7dffb0, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }),
+      );
+      beam.position.y = 55;
       grp.add(beam);
+      grp.userData.beam = beam;
+      grp.userData.ring = ring;
       grp.position.set(x, y, z);
       grp.userData.done = false;
       scene.add(grp);
@@ -129,7 +159,8 @@ const Rings = (function buildRingsModule() {
       if (Math.sqrt(dx * dx + dz * dz) < 22 && alt < 95) {
         m.userData.done = true;
         m.children[0].material = new THREE.MeshStandardMaterial({ color: 0x888888, emissive: 0x222222 });
-        m.children[1].visible = false;
+        if (m.userData.beam) m.userData.beam.visible = false;
+        if (m.userData.ring) m.userData.ring.visible = false;
         return i;
       }
     }
@@ -142,12 +173,13 @@ const Rings = (function buildRingsModule() {
     markers.forEach((m) => {
       m.userData.done = false;
       m.children[0].material = new THREE.MeshStandardMaterial({ color: 0x1ed760, emissive: 0x0d8a3a, emissiveIntensity: 0.9 });
-      m.children[1].visible = true;
+      if (m.userData.beam) m.userData.beam.visible = true;
+      if (m.userData.ring) m.userData.ring.visible = true;
     });
   }
 
   return {
     buildRings, reset, checkPass, nextRingPos, ringsLeft, ringsDone, update,
-    buildMarkers, checkCrate, markersLeft, resetMarkers,
+    buildMarkers, checkCrate, markersLeft, resetMarkers, setGoalsVisible,
   };
 })();

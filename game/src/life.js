@@ -464,8 +464,8 @@ const Life = (function buildLifeModule() {
     const mat = new THREE.MeshBasicMaterial({ color: 0x2a2a33, side: THREE.DoubleSide, fog: false });
     birds = new THREE.InstancedMesh(geo, mat, 21);
     flocks = [
-      { cx: 900, cy: 480, cz: 300, dx: 1, dz: -0.3, sp: 9 },
-      { cx: 600, cy: 450, cz: -600, dx: 0.8, dz: 0.5, sp: 8 },
+      { cx: 550, cy: 260, cz: 1150, dx: 1, dz: -0.3, sp: 9 },   // over the coast, in the cover shot's sky
+      { cx: 350, cy: 220, cz: -100, dx: 0.8, dz: 0.5, sp: 8 },  // over the river, in the river shot's sky
       { cx: 300, cy: 520, cz: 1800, dx: -1, dz: 0.2, sp: 10 },
     ];
     scene.add(birds);
@@ -491,7 +491,7 @@ const Life = (function buildLifeModule() {
         const rz = ox * Math.sin(ry) + oz * Math.cos(ry);
         dummy.position.set(fl.cx + rx, fl.cy + Math.sin(t * 2 + i * 1.3 + f * 2) * 1.2, fl.cz + rz);
         dummy.rotation.set(0, ry, 0);
-        dummy.scale.setScalar(1.6);
+        dummy.scale.setScalar(2.6); // big enough to read at 200-400 m
         dummy.updateMatrix();
         birds.setMatrixAt(n++, dummy.matrix);
       }
@@ -505,7 +505,7 @@ const Life = (function buildLifeModule() {
     const trailMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, fog: false });
     const defs = [
       { x: -2200, y: 640, z: -1400, vx: 95, vz: 20 },
-      { x: 2200, y: 720, z: 1200, vx: -85, vz: -15 },
+      { x: 1800, y: 520, z: 1600, vx: -85, vz: -15 }, // low over the coast, crosses the cover shot's sky
     ];
     for (const d of defs) {
       const g = new THREE.Group();
@@ -516,7 +516,7 @@ const Life = (function buildLifeModule() {
       const tail = new THREE.Mesh(new THREE.BoxGeometry(6, 0.4, 2), mat);
       tail.position.set(0, 0.6, -6.5);
       g.add(tail);
-      const trail = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.6, 70), trailMat);
+      const trail = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.6, 120), trailMat);
       trail.position.set(0, 0, -42);
       g.add(trail);
       g.position.set(d.x, d.y, d.z);
@@ -676,7 +676,9 @@ const Life = (function buildLifeModule() {
     rocks.instanceColor.needsUpdate = true;
     scene.add(rocks);
     // 40 pines where the floor is high enough (h 20-150), same pattern as
-    // buildTrees but aimed at this corridor.
+    // buildTrees but aimed at this corridor. Kept SMALL (0.6-1.0) and clear
+    // of the river line: v2's full-size pines crowded the flight path and
+    // read as giant black triangles in the low river shot.
     const tGeo = new THREE.CylinderGeometry(1.1, 1.6, 7, 6);
     const tMat = new THREE.MeshStandardMaterial({ color: 0x5d3a1a, roughness: 1 });
     const cGeo = new THREE.ConeGeometry(6.5, 17, 7);
@@ -690,9 +692,9 @@ const Life = (function buildLifeModule() {
       const x = Terrain.riverCenterX(z) - 140 + rng() * (1140 - Terrain.riverCenterX(z));
       const hy = Terrain.heightAt(x, z);
       if (hy < 20 || hy > 150) continue;
-      if (Math.abs(x - Terrain.riverCenterX(z)) < 60) continue;
+      if (Math.abs(x - Terrain.riverCenterX(z)) < 80) continue;
       if (Math.abs(x - roadX(z)) < 10) continue;
-      const s = 0.8 + rng() * 0.9;
+      const s = 0.6 + rng() * 0.4;
       dummy.position.set(x, hy + 3 * s, z);
       dummy.scale.setScalar(s);
       dummy.rotation.y = rng() * Math.PI * 2;
@@ -705,6 +707,74 @@ const Life = (function buildLifeModule() {
     }
     trunks.count = placed; cones.count = placed;
     scene.add(trunks); scene.add(cones);
+    // A HIGH wooden trestle viaduct across the river at z -350, 90 m ahead
+    // in the river shot: the frame needs a landmark on the water, not just
+    // a ribbon. The river channel floor is at -7 m, so a bank-level deck
+    // (11 m) sits 35 deg below the plane's sightline — outside the 31 deg
+    // half-FOV — and NEVER enters the frame (proven by the -320 probe:
+    // 30 m out, still invisible). A 45 m trestle puts the deck at 38 m,
+    // 22 deg down at 90 m: in the lower third, unmistakable.
+    // Two lamp globes on the deck read at distance.
+    const bx = Terrain.riverCenterX(-350);
+    const by = Terrain.heightAt(bx, -350);
+    const bridge = new THREE.Group();
+    const deck = new THREE.Mesh(
+      new THREE.BoxGeometry(90, 1.6, 11),
+      new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.95 }),
+    );
+    deck.position.y = 45; // trestle height: channel floor -7 m -> deck 38 m
+    bridge.add(deck);
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x6a4a26, roughness: 1 });
+    for (const s of [-1, 1]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(90, 1.2, 0.8), railMat);
+      rail.position.set(0, 46.4, s * 5);
+      bridge.add(rail);
+    }
+    for (const px of [-30, 0, 30]) {
+      const pier = new THREE.Mesh(
+        new THREE.BoxGeometry(4, 45, 9),
+        new THREE.MeshStandardMaterial({ color: 0x6a625a, roughness: 1 }),
+      );
+      pier.position.set(px, 22.5, 0);
+      bridge.add(pier);
+    }
+    const lampMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0 });
+    for (const s of [-1, 1]) {
+      const post = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.25, 0.25, 8, 6),
+        new THREE.MeshStandardMaterial({ color: 0x2a2a30, roughness: 0.6 }),
+      );
+      post.position.set(s * 30, 49.5, 0);
+      bridge.add(post);
+      const globe = new THREE.Mesh(new THREE.SphereGeometry(1.1, 8, 8), lampMat);
+      globe.position.set(s * 30, 54, 0);
+      bridge.add(globe);
+    }
+    bridge.position.set(bx, by, -350);
+    scene.add(bridge);
+    // Three riverside huts with lit windows on the east bank by the bridge,
+    // 100-180 m ahead so they sit inside the frame (ground at ~0-3 m is
+    // 30+ deg down at 60 m — out of frame — but ~26 deg down at 130 m).
+    const hutWall = new THREE.MeshStandardMaterial({ color: 0xd8c9a8, roughness: 0.95 });
+    const hutRoof = new THREE.MeshStandardMaterial({ color: 0x8a3a22, roughness: 0.9 });
+    const hutWin = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+    for (const [hx, hz] of [[bx + 48, -360], [bx + 58, -400], [bx + 44, -440]]) {
+      const hy = Terrain.heightAt(hx, hz);
+      const hut = new THREE.Group();
+      const walls = new THREE.Mesh(new THREE.BoxGeometry(10, 5.5, 8), hutWall);
+      walls.position.y = 2.75;
+      hut.add(walls);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(7.5, 4.5, 4), hutRoof);
+      roof.position.y = 7.7;
+      roof.rotation.y = Math.PI / 4;
+      hut.add(roof);
+      const win = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.8, 0.3), hutWin);
+      win.position.set(0, 3, 4.1);
+      hut.add(win);
+      hut.position.set(hx, hy, hz);
+      hut.rotation.y = rng() * Math.PI;
+      scene.add(hut);
+    }
   }
 
   function build(scene) {

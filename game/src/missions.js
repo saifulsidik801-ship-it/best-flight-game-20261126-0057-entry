@@ -32,6 +32,7 @@ const Missions = (function buildMissionsModule() {
     Physics.reset(mission);
     Rings.reset();
     Rings.resetMarkers();
+    Rings.setGoalsVisible(mission.type);
     Sky.setDusk(!!mission.dusk);
     Aircraft.setLandingLight(!!mission.dusk);
     return mission;
