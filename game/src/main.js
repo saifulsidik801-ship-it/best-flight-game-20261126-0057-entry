@@ -206,7 +206,7 @@ const Game = (function buildMainModule() {
     } else if (cameraMode === 'chase-low') {
       const eye = p.pos.clone().addScaledVector(fwd, -16).add(new THREE.Vector3(0, 4, 0));
       camera.position.lerp(eye, snap);
-      camera.lookAt(p.pos.clone().addScaledVector(fwd, 90).add(new THREE.Vector3(0, 1.5, 0)));
+      camera.lookAt(p.pos.clone().addScaledVector(fwd, 90).add(new THREE.Vector3(0, 0.5, 0)));
     } else if (cameraMode === 'title-fixed') {
       // Title shot: parked on the strip, plane right of frame, volcano behind.
       const eye = new THREE.Vector3(p.pos.x + 34, p.pos.y + 12, p.pos.z + 46);
@@ -228,7 +228,7 @@ const Game = (function buildMainModule() {
       const eye = p.pos.clone().addScaledVector(fwd, -18).add(new THREE.Vector3(0, 6.2, 0))
         .addScaledVector(right, 3.0);
       camera.position.lerp(eye, snap);
-      camera.lookAt(p.pos.clone().addScaledVector(fwd, 90).add(new THREE.Vector3(0, 2.5, 0)));
+      camera.lookAt(p.pos.clone().addScaledVector(fwd, 90).add(new THREE.Vector3(0, 1.0, 0)));
     }
     if (camShake > 0) {
       camShake = Math.max(0, camShake - dt);

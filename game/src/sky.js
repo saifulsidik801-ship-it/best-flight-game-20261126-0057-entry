@@ -78,12 +78,20 @@ const Sky = (function buildSkyModule() {
     scene.add(sunLight);
     scene.add(sunLight.target);
 
-    hemi = new THREE.HemisphereLight(CONFIG.hemiSky, CONFIG.hemiGround, 0.75);
+    // Warm fill from the camera/SE side: lifts every shadow-side face at
+    // once (hangar cube, bridge deck, plane underside, black trees).
+    // No shadows — one extra directional light is a small fragment cost.
+    const fillLight = new THREE.DirectionalLight(0xffe0b0, 0.65);
+    fillLight.position.set(2200, 1400, 2200);
+    scene.add(fillLight);
+    scene.add(fillLight.target);
+
+    hemi = new THREE.HemisphereLight(CONFIG.hemiSky, CONFIG.hemiGround, 0.9);
     scene.add(hemi);
 
     scene.fog = new THREE.Fog(CONFIG.fogColor, CONFIG.fogNear, CONFIG.fogFar);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.25;
+    renderer.toneMappingExposure = 1.35;
 
     buildClouds(scene);
     return { dome, sunMesh, sunLight };
@@ -101,17 +109,25 @@ const Sky = (function buildSkyModule() {
     const matWarm = new THREE.MeshBasicMaterial({
       color: 0xffd2b0, transparent: true, opacity: 0.78,
     });
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < 32; i++) {
       const cloud = new THREE.Group();
       const puffs = 4 + Math.floor(rng() * 4);
       for (let p = 0; p < puffs; p++) {
-        const r = 40 + rng() * 60;
+        const r = 60 + rng() * 80;
         const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 10), i % 2 ? matWarm : mat);
         puff.position.set((rng() - 0.5) * 260, (rng() - 0.5) * 26, (rng() - 0.5) * 110);
         puff.scale.y = 0.42;
         cloud.add(puff);
       }
-      cloud.position.set((rng() - 0.5) * 5200, 400 + rng() * 460, (rng() - 0.5) * 5200);
+      if (i < 26) {
+        cloud.position.set((rng() - 0.5) * 5200, 500 + rng() * 450, (rng() - 0.5) * 5200);
+      } else if (i % 2 === 0) {
+        // Cover view corridor: ahead of the cover camera, upper sky.
+        cloud.position.set(650 + rng() * 350, 550 + rng() * 350, 750 + rng() * 350);
+      } else {
+        // Dusk view corridor: ahead of the dusk camera.
+        cloud.position.set(-200 + rng() * 300, 550 + rng() * 350, 1300 + rng() * 350);
+      }
       cloud.userData.drift = 2.5 + rng() * 4;
       scene.add(cloud);
       clouds.push(cloud);
@@ -128,14 +144,14 @@ const Sky = (function buildSkyModule() {
       u.lowColor.value.setHex(0xff7a3c);
       sunLight.intensity = 1.7;
       sunLight.color.setHex(0xff8a4d);
-      hemi.intensity = 0.8; // dusk fill: the plane must not silhouette black
+      hemi.intensity = 0.95; // dusk fill: the plane must not silhouette black
     } else {
       u.topColor.value.setHex(CONFIG.skyTop);
       u.midColor.value.setHex(CONFIG.skyMid);
       u.lowColor.value.setHex(CONFIG.skyLow);
       sunLight.intensity = CONFIG.sunIntensity;
       sunLight.color.setHex(CONFIG.sunColor);
-      hemi.intensity = 0.75;
+      hemi.intensity = 0.9;
     }
   }
 

@@ -35,7 +35,7 @@ const Aircraft = (function buildAircraftModule() {
     const fusGeo = new THREE.LatheGeometry(profile, 20);
     fusGeo.rotateX(Math.PI / 2); // lathe axis → forward (+Z)
     const fusMat = new THREE.MeshStandardMaterial({
-      color: 0xd84a2e, roughness: 0.38, metalness: 0.22,
+      color: 0xd84a2e, roughness: 0.30, metalness: 0.35,
     });
     const fus = new THREE.Mesh(fusGeo, fusMat);
     fus.castShadow = true;
@@ -61,7 +61,7 @@ const Aircraft = (function buildAircraftModule() {
     wingShape.lineTo(0, 0);
     const wingGeo = new THREE.ExtrudeGeometry(wingShape, { depth: 0.22, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 2 });
     wingGeo.rotateX(-Math.PI / 2);
-    const wingMat = new THREE.MeshStandardMaterial({ color: 0xf5e9c8, roughness: 0.5, metalness: 0.2 });
+    const wingMat = new THREE.MeshStandardMaterial({ color: 0xf5e9c8, roughness: 0.5, metalness: 0.3 });
     const wingR = new THREE.Mesh(wingGeo, wingMat);
     wingR.position.set(0.6, 0.15, 0.4);
     wingR.castShadow = true;

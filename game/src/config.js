@@ -36,10 +36,10 @@ const CONFIG = {
   sunColor: 0xffc46b,
   sunIntensity: 2.4,
   hemiSky: 0x8fb4e8,
-  hemiGround: 0x5d3a1a,
+  hemiGround: 0x7a4a26,
   fogColor: 0xe8956b,
   fogNear: 900,
-  fogFar: 4200,
+  fogFar: 3200,
   // Runway.
   runway: { x: 0, z: 1450, heading: 0, length: 620, width: 34 },
   // Volcano (Merapi) — the valley's landmark, north-west.

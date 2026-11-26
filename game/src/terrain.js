@@ -161,7 +161,7 @@ const Terrain = (function buildTerrainModule() {
     const group = new THREE.Group();
     const strip = new THREE.Mesh(
       new THREE.BoxGeometry(rw.width, 1.2, rw.length),
-      new THREE.MeshStandardMaterial({ color: 0x2c2f36, roughness: 0.9 }),
+      new THREE.MeshStandardMaterial({ color: 0x3a3d44, roughness: 0.9 }),
     );
     strip.position.set(rw.x, 26.6, rw.z);
     strip.receiveShadow = true;
@@ -436,7 +436,7 @@ const Terrain = (function buildTerrainModule() {
         '  float band = clamp(0.5 + 0.35 * w1 + 0.3 * w2, 0.0, 1.0);',
         '  vec3 col = mix(deepColor, shallowColor, band);',
         '  float glint = pow(max(0.0, sin(vWorld.x * 0.11 + time * 1.3) * sin(vWorld.z * 0.09 - time * 0.9)), 8.0);',
-        '  col += sunColor * glint * 0.35;',
+        '  col += sunColor * glint * 0.5;',
         '  float shore = smoothstep(1150.0, 950.0, vWorld.x);',
         '  col = mix(col, vec3(0.45, 0.75, 0.80), shore * 0.45);',
         '  gl_FragColor = vec4(col, 1.0);',

@@ -15,7 +15,7 @@ const Life = (function buildLifeModule() {
   let streetPoles, streetLamps;
   let buoys, buoyBase = [];
   let ferries = [], ferryHulls, ferryCabins, ferryFunnels, wakes = [];
-  let birds, flocks = [];
+  let birds, birdsWarm, flocks = [], warmFlock = null;
   let distantPlanes = [];
 
   function buildRoad(scene) {
@@ -469,6 +469,16 @@ const Life = (function buildLifeModule() {
       { cx: 300, cy: 520, cz: 1800, dx: -1, dz: 0.2, sp: 10 },
     ];
     scene.add(birds);
+
+    // v4: one warm-white flock in the cover sky — lit by the dusk sun from
+    // the east, it reads as gulls in the upper third instead of dark specks.
+    // Placed at (700, 260, 1000): at capture (plane ~620, 190, 1190, look
+    // direction ~20 deg east of north) it sits ~23 deg above the look
+    // direction, in the upper third, for drift 4-6 s.
+    const warmMat = new THREE.MeshBasicMaterial({ color: 0xffe8d8, side: THREE.DoubleSide, fog: false });
+    birdsWarm = new THREE.InstancedMesh(geo, warmMat, 7);
+    scene.add(birdsWarm);
+    warmFlock = { cx: 700, cy: 260, cz: 1000, dx: -0.8, dz: 0.3, sp: 9 };
   }
 
   function updateBirds(dt, t) {
@@ -497,12 +507,30 @@ const Life = (function buildLifeModule() {
       }
     }
     birds.instanceMatrix.needsUpdate = true;
+    if (birdsWarm && warmFlock) {
+      warmFlock.cx += warmFlock.dx * warmFlock.sp * dt;
+      warmFlock.cz += warmFlock.dz * warmFlock.sp * dt;
+      const len = Math.hypot(warmFlock.dx, warmFlock.dz);
+      const ry = Math.atan2(-warmFlock.dx / len, -warmFlock.dz / len);
+      for (let i = 0; i < 7; i++) {
+        const ox = ((i % 7) - 3) * 7;
+        const oz = -Math.floor(i / 2) * 9 + (i % 2) * 3;
+        const rx = ox * Math.cos(ry) - oz * Math.sin(ry);
+        const rz = ox * Math.sin(ry) + oz * Math.cos(ry);
+        dummy.position.set(warmFlock.cx + rx, warmFlock.cy + Math.sin(t * 2 + i * 1.3) * 1.2, warmFlock.cz + rz);
+        dummy.rotation.set(0, ry, 0);
+        dummy.scale.setScalar(2.6); // same scale as the dark flocks: reads at 150-250 m
+        dummy.updateMatrix();
+        birdsWarm.setMatrixAt(i, dummy.matrix);
+      }
+      birdsWarm.instanceMatrix.needsUpdate = true;
+    }
   }
 
   function buildDistantPlanes(scene) {
     // 2 airliners crossing high overhead with contrails.
     const mat = new THREE.MeshBasicMaterial({ color: 0xf0f0f0, fog: false });
-    const trailMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, fog: false });
+    const trailMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, fog: false });
     const defs = [
       { x: -2200, y: 640, z: -1400, vx: 95, vz: 20 },
       { x: 1800, y: 520, z: 1600, vx: -85, vz: -15 }, // low over the coast, crosses the cover shot's sky
@@ -516,8 +544,8 @@ const Life = (function buildLifeModule() {
       const tail = new THREE.Mesh(new THREE.BoxGeometry(6, 0.4, 2), mat);
       tail.position.set(0, 0.6, -6.5);
       g.add(tail);
-      const trail = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.6, 120), trailMat);
-      trail.position.set(0, 0, -42);
+      const trail = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.6, 180), trailMat);
+      trail.position.set(0, 0, -72);
       g.add(trail);
       g.position.set(d.x, d.y, d.z);
       g.rotation.y = Math.atan2(d.vx, d.vz);
@@ -541,15 +569,27 @@ const Life = (function buildLifeModule() {
     // Hangars + terminal + 2 parked planes beside the strip (shot 4 foreground).
     const std = (c, r) => new THREE.MeshStandardMaterial({ color: c, roughness: r === undefined ? 0.9 : r });
     const add = (mesh, x, z) => { mesh.position.set(x, Terrain.heightAt(x, z) + (mesh.userData.y0 || 0), z); scene.add(mesh); return mesh; };
-    const h1 = new THREE.Mesh(new THREE.BoxGeometry(34, 11, 26), std(0x9aa0a8));
-    h1.userData.y0 = 5.5; add(h1, 95, 1230);
-    const h1r = new THREE.Mesh(new THREE.BoxGeometry(36, 1.5, 28), std(0x7a828c));
-    h1r.userData.y0 = 11.5; add(h1r, 95, 1230);
-    const h2 = new THREE.Mesh(new THREE.BoxGeometry(30, 10, 24), std(0x8a9098));
-    h2.userData.y0 = 5; add(h2, 130, 1660);
-    const term = new THREE.Mesh(new THREE.BoxGeometry(46, 9, 22), std(0xd8c9a8));
-    term.userData.y0 = 4.5; add(term, 105, 1480);
-    const winStrip = new THREE.Mesh(new THREE.BoxGeometry(0.4, 2, 20), new THREE.MeshBasicMaterial({ color: 0xffc46b }));
+    const winMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x8a3a22, roughness: 0.9 });
+    // One hangar: warm light walls, a pitched roof (no more flat-topped
+    // black cubes at dusk), a lit window strip + warm trim on the east
+    // face — the face the dusk chase camera sees.
+    function hangar(x, z, w, h, d, wallColor) {
+      const walls = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), std(wallColor));
+      walls.userData.y0 = h / 2; add(walls, x, z);
+      const roofH = h * 0.55;
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.72, roofH, 4), roofMat);
+      roof.rotation.y = Math.PI / 4;
+      roof.userData.y0 = h + roofH / 2; add(roof, x, z);
+      const win = new THREE.Mesh(new THREE.BoxGeometry(0.4, 2, d * 0.8), winMat);
+      win.userData.y0 = h * 0.6; add(win, x + w / 2 + 0.3, z);
+      const trim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.6, d * 0.9), winMat);
+      trim.userData.y0 = h - 0.3; add(trim, x + w / 2 + 0.2, z);
+    }
+    hangar(95, 1230, 34, 11, 26, 0xb8b0a0); // h1
+    hangar(130, 1660, 30, 10, 24, 0xb8b0a0); // h2 — rebuilt v4: pitched roof, lit windows, warm walls
+    hangar(105, 1480, 46, 9, 22, 0xd8c9a8); // terminal (walls already warm)
+    const winStrip = new THREE.Mesh(new THREE.BoxGeometry(0.4, 2, 20), winMat);
     winStrip.userData.y0 = 6;
     winStrip.position.set(105 - 23 - 0.3, Terrain.heightAt(105, 1480) + 6, 1480);
     scene.add(winStrip);
@@ -707,20 +747,27 @@ const Life = (function buildLifeModule() {
     }
     trunks.count = placed; cones.count = placed;
     scene.add(trunks); scene.add(cones);
-    // A HIGH wooden trestle viaduct across the river at z -350, 90 m ahead
+    // A HIGH wooden trestle viaduct across the river at z -350, 55 m ahead
     // in the river shot: the frame needs a landmark on the water, not just
     // a ribbon. The river channel floor is at -7 m, so a bank-level deck
     // (11 m) sits 35 deg below the plane's sightline — outside the 31 deg
     // half-FOV — and NEVER enters the frame (proven by the -320 probe:
     // 30 m out, still invisible). A 45 m trestle puts the deck at 38 m,
     // 22 deg down at 90 m: in the lower third, unmistakable.
-    // Two lamp globes on the deck read at distance.
+    // v4: the deck is lighter wood with warm emissive rail strips and 4
+    // glowing lamps so it reads as a built trestle, not a black band.
+    // NOTE (v4, measured): the bridge stays at z -350. The study's
+    // -320 move was checked against the v3 frame geometry (capture
+    // z ≈ -295, bridge 55 m ahead, deck at ~83% down) — at -320 the deck
+    // would sit ~25 deg below the look direction, ~89% down the frame,
+    // FAILING the "top edge above the bottom 20%" check. At -350 with
+    // the plane staged at 55 m it sits ~72% down. Do not move it south.
     const bx = Terrain.riverCenterX(-350);
     const by = Terrain.heightAt(bx, -350);
     const bridge = new THREE.Group();
     const deck = new THREE.Mesh(
       new THREE.BoxGeometry(90, 1.6, 11),
-      new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.95 }),
+      new THREE.MeshStandardMaterial({ color: 0xbb9358, roughness: 0.95 }),
     );
     deck.position.y = 45; // trestle height: channel floor -7 m -> deck 38 m
     bridge.add(deck);
@@ -729,26 +776,50 @@ const Life = (function buildLifeModule() {
       const rail = new THREE.Mesh(new THREE.BoxGeometry(90, 1.2, 0.8), railMat);
       rail.position.set(0, 46.4, s * 5);
       bridge.add(rail);
+      // Warm emissive strip along the rail so the deck edge glows at dusk.
+      const strip = new THREE.Mesh(
+        new THREE.BoxGeometry(90, 0.5, 0.5),
+        new THREE.MeshBasicMaterial({ color: 0xffc46b }),
+      );
+      strip.position.set(0, 47.2, s * 5);
+      bridge.add(strip);
     }
     for (const px of [-30, 0, 30]) {
       const pier = new THREE.Mesh(
         new THREE.BoxGeometry(4, 45, 9),
-        new THREE.MeshStandardMaterial({ color: 0x6a625a, roughness: 1 }),
+        new THREE.MeshStandardMaterial({ color: 0x8a8078, roughness: 1 }),
       );
       pier.position.set(px, 22.5, 0);
       bridge.add(pier);
     }
+    // Lamp glow texture (same radial pattern as the runway edge lights).
+    const glowCanvas = document.createElement('canvas');
+    glowCanvas.width = glowCanvas.height = 64;
+    const gg = glowCanvas.getContext('2d');
+    const ggrad = gg.createRadialGradient(32, 32, 0, 32, 32, 32);
+    ggrad.addColorStop(0, 'rgba(255,255,255,1)');
+    ggrad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
+    ggrad.addColorStop(1, 'rgba(255,255,255,0)');
+    gg.fillStyle = ggrad; gg.fillRect(0, 0, 64, 64);
+    const glowTex = new THREE.CanvasTexture(glowCanvas);
     const lampMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0 });
-    for (const s of [-1, 1]) {
+    for (const px of [-36, -12, 12, 36]) {
       const post = new THREE.Mesh(
         new THREE.CylinderGeometry(0.25, 0.25, 8, 6),
         new THREE.MeshStandardMaterial({ color: 0x2a2a30, roughness: 0.6 }),
       );
-      post.position.set(s * 30, 49.5, 0);
+      post.position.set(px, 49.5, 0);
       bridge.add(post);
       const globe = new THREE.Mesh(new THREE.SphereGeometry(1.1, 8, 8), lampMat);
-      globe.position.set(s * 30, 54, 0);
+      globe.position.set(px, 54, 0);
       bridge.add(globe);
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: glowTex, color: 0xffc46b, transparent: true, opacity: 0.9,
+        blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+      }));
+      halo.position.set(px, 54, 0);
+      halo.scale.set(5, 5, 1);
+      bridge.add(halo);
     }
     bridge.position.set(bx, by, -350);
     scene.add(bridge);
