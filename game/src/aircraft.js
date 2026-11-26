@@ -177,21 +177,23 @@ const Aircraft = (function buildAircraftModule() {
       new THREE.MeshBasicMaterial({ color: 0xff2a2a }));
     navL.position.set(-7.3, 1.35, -0.3);
     g.add(navL);
-    const gl = glowSprite(0xff2a2a, 6, 0.8);
+    // v7: wingtip nav glows bigger and hotter so the Beaver reads lit
+    // from behind in the landing shot (was scale 6 / opacity 0.8).
+    const gl = glowSprite(0xff2a2a, 9, 0.95);
     gl.position.copy(navL.position);
     g.add(gl);
     const navR = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6),
       new THREE.MeshBasicMaterial({ color: 0x2aff66 }));
     navR.position.set(7.3, 1.35, -0.3);
     g.add(navR);
-    const gr = glowSprite(0x2aff66, 6, 0.8);
+    const gr = glowSprite(0x2aff66, 9, 0.95);
     gr.position.copy(navR.position);
     g.add(gr);
     tailStrobe = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6),
       new THREE.MeshBasicMaterial({ color: 0xffffff }));
     tailStrobe.position.set(0, 0.95, 5.95);
     g.add(tailStrobe);
-    tailStrobeGlow = glowSprite(0xffffff, 5, 0.7);
+    tailStrobeGlow = glowSprite(0xffffff, 8, 0.9);
     tailStrobeGlow.position.copy(tailStrobe.position);
     g.add(tailStrobeGlow);
 
@@ -215,7 +217,9 @@ const Aircraft = (function buildAircraftModule() {
     landingBeam.position.set(0, -1.6, -8.5);
     landingBeam.rotation.x = -Math.PI / 2 + 0.22;
     landingLight.add(landingBeam);
-    landingPool = glowSprite(0xfff2cc, 10, 0.55);
+    // v7 round 5: smaller pool — round 4 blew the Beaver's tail to pure
+    // white in the landing shot.
+    landingPool = glowSprite(0xfff2cc, 10, 0.5);
     landingLight.add(landingPool);
     landingLight.visible = false;
     g.add(landingLight);
