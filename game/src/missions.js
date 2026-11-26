@@ -1,4 +1,4 @@
-// Merapi Ring Run — sorties: what counts as progress, winning and losing.
+// Aurora Ring Run — sorties: what counts as progress, winning and losing.
 // One clear job: the three missions' rules, scoring and end states.
 
 const Missions = (function buildMissionsModule() {
@@ -13,7 +13,7 @@ const Missions = (function buildMissionsModule() {
   let lastEvent = null;
   let lowFuelWarned = false;
 
-  try { best = Number(localStorage.getItem('merapi-best') || 0); } catch (e) { best = 0; }
+  try { best = Number(localStorage.getItem('aurora-best') || 0); } catch (e) { best = 0; }
 
   function select(index) {
     mission = MISSIONS[index] || MISSIONS[0];
@@ -88,7 +88,7 @@ const Missions = (function buildMissionsModule() {
     if (stepInfo && stepInfo.event) {
       const ev = stepInfo.event;
       if (ev.type === 'destroyed') {
-        endSortie(false, 'AIRFRAME LOST — THE MOUNTAIN WINS THIS TIME');
+        endSortie(false, 'AIRFRAME LOST — THE ICE WINS THIS TIME');
       } else if (ev.type === 'crash') {
         AudioSys.thump();
         lastEvent = { type: 'crash', text: 'TERRAIN STRIKE — AIRFRAME ' + Math.max(0, Math.round(p.hull)) + '%' };
@@ -96,7 +96,7 @@ const Missions = (function buildMissionsModule() {
     }
     // Fuel out over rough ground ends it too.
     if (p.fuel <= 0 && !p.onGround && !finished) {
-      endSortie(false, 'OUT OF FUEL — FORCED LANDING IN THE VALLEY');
+      endSortie(false, 'OUT OF FUEL — FORCED LANDING ON THE ICE');
     }
     // Time bonus ticks while flying clean.
     if (!finished && p.speed > 30) score += dt * 1.5;
@@ -115,7 +115,7 @@ const Missions = (function buildMissionsModule() {
     score = Math.round(score);
     if (score > best) {
       best = score;
-      try { localStorage.setItem('merapi-best', String(best)); } catch (e) {}
+      try { localStorage.setItem('aurora-best', String(best)); } catch (e) {}
     }
   }
 

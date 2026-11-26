@@ -103,7 +103,7 @@ const HUD = (function buildHudModule() {
     const end = el('endScreen');
     end.style.display = 'flex';
     el('endTitle').textContent = ms.won ? 'SORTIE COMPLETE' : 'SORTIE FAILED';
-    el('endSub').textContent = ms.won ? 'The valley remembers a good pilot.' : 'The mountain is patient. Try again.';
+    el('endSub').textContent = ms.won ? 'Polaris remembers a good pilot.' : 'The ice is patient. Try again.';
     el('endStats').innerHTML =
       '<b>' + ms.mission.name + '</b><br>' +
       'Score <b>' + ms.score + '</b> &nbsp;·&nbsp; Best <b>' + ms.best + '</b><br>' +
