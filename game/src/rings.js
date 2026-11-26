@@ -6,12 +6,13 @@ const Rings = (function buildRingsModule() {
   let ringMat, ringMatNext;
 
   function ringCourse() {
-    // A course that tours the valley: runway → river → volcano shoulder → ridge → home.
+    // A course that tours the coast: runway → town → out over the sea →
+    // up the coast → volcano shoulder → ridge → home along the beach.
     const pts = [
-      { x: 0, y: 210, z: 1080 }, { x: -260, y: 230, z: 620 }, { x: -620, y: 280, z: 120 },
-      { x: -780, y: 340, z: -420 }, { x: -560, y: 420, z: -900 }, { x: -140, y: 380, z: -1080 },
-      { x: 320, y: 300, z: -820 }, { x: 640, y: 250, z: -380 }, { x: 780, y: 210, z: 120 },
-      { x: 560, y: 230, z: 620 }, { x: 240, y: 200, z: 980 }, { x: 0, y: 190, z: 1180 },
+      { x: 700, y: 200, z: 900 }, { x: 1050, y: 210, z: 450 }, { x: 1200, y: 230, z: -100 },
+      { x: 950, y: 280, z: -650 }, { x: 350, y: 340, z: -1000 }, { x: -350, y: 420, z: -1150 },
+      { x: -900, y: 460, z: -700 }, { x: -750, y: 300, z: -100 }, { x: -350, y: 250, z: 350 },
+      { x: 150, y: 220, z: 700 }, { x: 600, y: 210, z: 950 }, { x: 850, y: 200, z: 1250 },
     ];
     return pts;
   }
@@ -96,7 +97,7 @@ const Rings = (function buildRingsModule() {
     const rng = makeRng(2024);
     markers = [];
     for (let i = 0; i < 6; i++) {
-      const z = 1600 - i * 480;
+      const z = 1600 - i * 500;
       const x = Terrain.riverCenterX(z) + (rng() - 0.5) * 40;
       const y = Terrain.heightAt(x, z) + 2;
       const grp = new THREE.Group();

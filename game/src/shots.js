@@ -27,28 +27,34 @@ const Shots = (function buildShotsModule() {
     // All flying shots: hide screens, fly the sortie.
     HUD.hideScreens();
     if (shot === 'cover' || shot === 'play') {
-      // Just south of ring 1, ring 1 dead ahead (green = next), volcano left.
+      // South-west of ring 1, ring 1 dead ahead (green = next): the chase
+      // looks north-east down the coast — sea ahead-right, town and harbour
+      // below, volcano far left.
       game.startSortie(0);
-      p.pos.set(60, 225, 1260);
-      p.heading = -0.34; p.pitch = 0.03; p.roll = -0.08;
+      p.pos.set(520, 210, 1080);
+      p.heading = 0.78; p.pitch = 0.02; p.roll = 0;
       p.speed = 58; p.throttle = 0.72;
       game.setCameraMode('chase');
       game.setAutopilot(true);
     } else if (shot === 'river') {
-      // River Rescue sortie: low over the river, green drop markers ahead.
+      // River Rescue sortie: low over the river near its bend to the sea,
+      // green drop markers ahead-left, coast and water ahead-right.
+      // No autopilot: it would yank the plane back north-west toward the
+      // river and swing the sea out of frame. Manual trim, straight NNE.
       Missions.select(1);
       game.startSortie(1);
-      const mz = 1600, mx = Terrain.riverCenterX(mz);
-      p.pos.set(mx + 60, 115, mz + 260);
-      p.heading = 0.1; p.pitch = -0.01; p.roll = 0.05;
+      p.pos.set(200, 105, -450);
+      p.heading = 0.35; p.pitch = -0.01; p.roll = 0;
       p.speed = 52; p.throttle = 0.66;
       game.setCameraMode('chase-low');
-      game.setAutopilot(true);
     } else if (shot === 'dusk') {
+      // Dusk approach: staged already lined up with the lit strip (heading
+      // -0.32 points straight at it from the south-east), so the autopilot
+      // holds a gentle wings-level approach instead of a hard bank.
       Missions.select(2);
       game.startSortie(2);
-      p.pos.set(-140, 330, 2350);
-      p.heading = 0.06; p.pitch = -0.06; p.roll = 0.05;
+      p.pos.set(300, 330, 2350);
+      p.heading = -0.32; p.pitch = -0.06; p.roll = 0.05;
       p.speed = 55; p.throttle = 0.6;
       game.setCameraMode('chase');
       game.setAutopilot(true);

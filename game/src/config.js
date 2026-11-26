@@ -50,13 +50,13 @@ const CONFIG = {
 const MISSIONS = [
   {
     id: 1, name: 'SORTIE 1 · RING RUN',
-    goal: 'Thread all 12 golden rings over the Merapi valley. Mind the volcano thermals.',
+    goal: 'Thread all 12 golden rings over the coast, the sea and the volcano. Mind the volcano thermals.',
     type: 'rings', target: 12,
     start: { x: 0, y: 260, z: 1750, heading: 0, speed: 55 },
   },
   {
     id: 2, name: 'SORTIE 2 · RIVER RESCUE',
-    goal: 'Fly low along the river and drop 6 supply crates on the glowing markers. Stay under 90 m.',
+    goal: 'Fly low along the river to the sea and drop 6 supply crates on the glowing markers. Stay under 90 m.',
     type: 'crates', target: 6,
     start: { x: 420, y: 150, z: 2100, heading: -0.35, speed: 50 },
   },

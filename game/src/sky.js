@@ -80,7 +80,7 @@ const Sky = (function buildSkyModule() {
     const mat = new THREE.MeshBasicMaterial({
       color: 0xffe8d8, transparent: true, opacity: 0.82,
     });
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < 16; i++) {
       const cloud = new THREE.Group();
       const puffs = 4 + Math.floor(rng() * 4);
       for (let p = 0; p < puffs; p++) {

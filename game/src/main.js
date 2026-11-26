@@ -34,6 +34,10 @@ const Game = (function buildMainModule() {
     Terrain.buildVolcanoSmoke(scene);
     Terrain.buildVillages(scene);
     Terrain.buildTrees(scene);
+    Terrain.buildSea(scene);
+    Terrain.buildBoats(scene);
+    Terrain.buildLighthouse(scene);
+    Terrain.buildPalms(scene);
     plane = Aircraft.buildAircraft(scene);
     Rings.buildRings(scene);
     Rings.buildMarkers(scene);
@@ -178,6 +182,7 @@ const Game = (function buildMainModule() {
     Aircraft.update(dt, p.throttle, p.speed, clock);
     Rings.update(dt, clock);
     Sky.update(dt, clock);
+    Terrain.updateSea(dt, clock);
     AudioSys.update(p.throttle, p.speed);
     updateCamera(rawDt || dt);
     HUD.update(dt, clock);
