@@ -1,262 +1,327 @@
-// Aurora Ring Run — living bay: Polaris Station, camps, floes, icebergs.
-// One clear job: fill every frame so no shot reads as empty.
-// RULES: instanced meshes and cheap materials only. NO new lights, NO
-// shadow-casting meshes (castShadow stays false everywhere here), NO per-
-// frame allocations. Everything added is a handful of draw calls.
+// Aurora Ring Run v6 — living things: Polaris Station, the icebreaker,
+// three supply camps, tern flocks, a distant airliner. Windows, drums and
+// crates are InstancedMeshes (one draw call each) to protect the FPS.
 
 const Life = (function buildLifeModule() {
-  const dummy = new THREE.Object3D();
-  let flocks = [];
+  let ternMesh = null;
+  let ternBase = [];
   let airliner = null;
+  let stationBeacon = null;
 
-  // One station building: warm walls, gable roof, lit windows, one glow.
-  function buildStationBuilding(scene, x, z, w, h, d, rotY) {
-    const g = new THREE.Group();
-    const gy = Terrain.heightAt(x, z);
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0xb8a888, roughness: 0.85 });
-    const walls = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
-    walls.position.y = h / 2;
-    g.add(walls);
-    // Gable roof: two sloped slabs meeting at a ridge.
-    const roofMat = new THREE.MeshStandardMaterial({ color: 0xdfe8f2, roughness: 0.8 });
-    const slopeLen = (w / 2) / Math.cos(0.6) + 0.8;
-    [-1, 1].forEach((s) => {
-      const slope = new THREE.Mesh(new THREE.BoxGeometry(slopeLen, 0.4, d + 1.5), roofMat);
-      slope.position.set(-s * w * 0.22, h + 1.4, 0);
-      slope.rotation.z = s * 0.6;
-      g.add(slope);
-    });
-    // Lit window strips on the front face (the side facing the strip).
-    const winMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
-    const nWin = Math.max(2, Math.floor(w / 7));
-    for (let i = 0; i < nWin; i++) {
-      const win = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.5), winMat);
-      win.position.set(-w / 2 + 4 + i * ((w - 8) / Math.max(1, nWin - 1)), h * 0.55, d / 2 + 0.08);
-      g.add(win);
-    }
-    const glow = makeGlowSprite(0xffc46b, 13);
-    glow.position.set(0, h * 0.6, d / 2 + 3);
-    g.add(glow);
-    g.position.set(x, gy, z);
-    g.rotation.y = rotY;
-    scene.add(g);
+  function glowTexture() {
+    const c = document.createElement('canvas');
+    c.width = 128; c.height = 128;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(c);
   }
+  const glowTex = glowTexture();
 
-  function buildStation(scene) {
-    // Polaris Station, west of the strip, every building lit.
-    buildStationBuilding(scene, 150, 1380, 26, 10, 16, 0.1);
-    buildStationBuilding(scene, 210, 1450, 20, 9, 14, -0.15);
-    buildStationBuilding(scene, 130, 1520, 18, 8, 12, 0.2);
-    buildStationBuilding(scene, 240, 1340, 30, 12, 20, 0.05); // hangar
-    buildStationBuilding(scene, 180, 1560, 14, 7, 10, -0.1);
-    buildStationBuilding(scene, 260, 1480, 16, 8, 12, 0.12);
-  }
-
-  function buildCamp(scene, x, z) {
-    const gy = Terrain.heightAt(x, z);
-    const tentMat = new THREE.MeshStandardMaterial({
-      color: 0xc85a2a, roughness: 0.85, flatShading: true,
-    });
-    const doorMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
-    const positions = [[0, 0], [9, 5], [-8, 6]];
-    positions.forEach(([dx, dz], i) => {
-      const tent = new THREE.Mesh(new THREE.ConeGeometry(3.6, 5.2, 7), tentMat);
-      tent.position.set(x + dx, gy + 2.6, z + dz);
-      scene.add(tent);
-      const door = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 2.2), doorMat);
-      door.position.set(x + dx, gy + 1.1, z + dz + 3.5);
-      scene.add(door);
-    });
-    // Crates + flag pole.
-    const crateMat = new THREE.MeshStandardMaterial({ color: 0xc98f4a, roughness: 0.9 });
-    const c = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4), crateMat);
-    c.position.set(x + 12, gy + 2, z - 4);
-    scene.add(c);
-    const pole = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.15, 0.15, 7, 6),
-      new THREE.MeshStandardMaterial({ color: 0x8a8f96, roughness: 0.6, metalness: 0.5 }),
-    );
-    pole.position.set(x - 12, gy + 3.5, z - 2);
-    scene.add(pole);
-    const flag = new THREE.Mesh(
-      new THREE.PlaneGeometry(2.4, 1.5),
-      new THREE.MeshBasicMaterial({ color: 0x39ff88, side: THREE.DoubleSide }),
-    );
-    flag.position.set(x - 10.8, gy + 6, z - 2);
-    scene.add(flag);
-    const glow = makeGlowSprite(0xffc46b, 12);
-    glow.position.set(x, gy + 4, z + 3);
-    scene.add(glow);
-  }
-
-  function buildCamps(scene) {
-    buildCamp(scene, 330, -800);   // north camp, beside the lead
-    buildCamp(scene, -600, 400);   // west camp, on the bay
-    buildCamp(scene, 950, -300);   // east camp, on the field
-  }
-
-  function buildFloes(scene) {
-    // One jittered disc geometry, instanced 44 times — floes on the bay
-    // and floating in the lead.
-    const geo = new THREE.CircleGeometry(1, 7);
-    const pos = geo.attributes.position;
-    const rng = makeRng(3131);
-    for (let i = 1; i < pos.count; i++) {
-      const s = 0.75 + rng() * 0.5;
-      pos.setX(i, pos.getX(i) * s);
-      pos.setY(i, pos.getY(i) * s);
-    }
-    geo.computeVertexNormals();
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0.05 });
-    const floes = new THREE.InstancedMesh(geo, mat, 44);
-    const col = new THREE.Color();
-    const floeCols = [0xdfeaf5, 0xb8d4e8, 0xdfeaf5, 0xcfe0f2];
-    for (let i = 0; i < 44; i++) {
-      let x, z, y;
-      if (i < 30) {
-        x = -2400 + rng() * 2100;
-        z = -1600 + rng() * 2800;
-        y = 12.7;
-      } else {
-        z = -1600 + rng() * 3200;
-        x = Terrain.riverCenterX(z) + (rng() - 0.5) * 90;
-        y = 4.7;
-      }
-      dummy.position.set(x, y, z);
-      dummy.rotation.set(-Math.PI / 2, 0, rng() * Math.PI);
-      dummy.scale.set(8 + rng() * 14, 8 + rng() * 14, 1);
-      dummy.updateMatrix();
-      floes.setMatrixAt(i, dummy.matrix);
-      floes.setColorAt(i, col.setHex(floeCols[i % floeCols.length]));
-    }
-    scene.add(floes);
-  }
-
-  function buildIcebergs(scene) {
-    // Three lathe berg profiles, reused with different scales/rotations.
-    function bergGeo(seed, peak) {
-      const rng = makeRng(seed);
-      const pts = [];
-      const steps = 6;
-      for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        const r = (1 - t * 0.75) * (20 + rng() * 6) * (t === 0 ? 0.01 : 1);
-        pts.push(new THREE.Vector2(Math.max(0.01, r), t * peak));
-      }
-      return new THREE.LatheGeometry(pts, 9);
-    }
-    const geos = [bergGeo(71, 46), bergGeo(72, 58), bergGeo(73, 34)];
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0xd8e4f2, roughness: 0.4, metalness: 0.05, flatShading: true,
-    });
-    const rng = makeRng(7171);
-    for (let i = 0; i < 14; i++) {
-      const berg = new THREE.Mesh(geos[i % 3], mat);
-      let x, z;
-      if (i < 9) {
-        x = -2350 + rng() * 2000;
-        z = -1600 + rng() * 2700;
-      } else {
-        x = -400 + rng() * 1800;
-        z = -2100 + rng() * 900;
-      }
-      const s = 0.5 + rng() * 0.8;
-      berg.scale.set(s, 0.7 + rng() * 0.6, s);
-      berg.rotation.y = rng() * Math.PI * 2;
-      berg.position.set(x, Terrain.heightAt(x, z) - 3, z);
-      scene.add(berg);
-    }
-  }
-
-  function buildTerns(scene) {
-    // Two white tern flocks in V formation, circling the bay.
-    const birdGeo = new THREE.BufferGeometry();
-    const verts = new Float32Array([
-      -1.6, 0, 0, 0, 0, 0.7, 0, 0, 0,
-      0, 0, 0, 1.6, 0, 0, 0, 0, 0.7,
-    ]);
-    birdGeo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-    birdGeo.computeVertexNormals();
-    const birdMat = new THREE.MeshBasicMaterial({
-      color: 0xf2f6fa, side: THREE.DoubleSide,
-    });
-    [[-600, 420, -900, 260], [700, 380, 300, 200]].forEach(([cx, cy, cz, r]) => {
-      const flock = new THREE.Group();
-      for (let i = 0; i < 7; i++) {
-        const b = new THREE.Mesh(birdGeo, birdMat);
-        const row = Math.floor(i / 2);
-        const side = i % 2 === 0 ? -1 : 1;
-        b.position.set(side * row * 7, -row * 1.5, row * 9);
-        flock.add(b);
-      }
-      flock.userData = { cx, cy, cz, r, phase: (cx + cz) * 0.001 };
-      scene.add(flock);
-      flocks.push(flock);
-    });
-  }
-
-  function buildAirliner(scene) {
-    // One distant airliner, high and far north, red/green nav lights and
-    // a faint contrail — the night sky's far traffic.
-    const g = new THREE.Group();
-    const darkMat = new THREE.MeshStandardMaterial({ color: 0x2a2e33, roughness: 0.6 });
-    const fus = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 22, 8), darkMat);
-    fus.rotation.x = Math.PI / 2;
-    g.add(fus);
-    const wing = new THREE.Mesh(new THREE.BoxGeometry(30, 0.4, 4), darkMat);
-    g.add(wing);
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(9, 0.4, 3), darkMat);
-    tail.position.z = -10;
-    g.add(tail);
-    const navR = makeGlowSprite(0xff3b30, 8);
-    navR.position.set(-15, 0, 0);
-    g.add(navR);
-    const navG = makeGlowSprite(0x39ff88, 8);
-    navG.position.set(15, 0, 0);
-    g.add(navG);
-    const strobe = makeGlowSprite(0xffffff, 10);
-    strobe.position.set(0, 0, -11);
-    g.add(strobe);
-    const contrail = new THREE.Mesh(
-      new THREE.PlaneGeometry(2.2, 130),
-      new THREE.MeshBasicMaterial({
-        color: 0xdfe8f2, transparent: true, opacity: 0.3, depthWrite: false,
-      }),
-    );
-    contrail.rotation.x = -Math.PI / 2;
-    contrail.position.set(0, 0.4, 78);
-    g.add(contrail);
-    g.position.set(-2000, 900, -1900);
-    scene.add(g);
-    airliner = g;
+  function glowSprite(color, scale, opacity) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTex, color, transparent: true, opacity,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    s.scale.set(scale, scale, 1);
+    return s;
   }
 
   function build(scene) {
-    buildStation(scene);
-    buildCamps(scene);
-    buildFloes(scene);
-    buildIcebergs(scene);
-    buildTerns(scene);
-    buildAirliner(scene);
+    const st = CONFIG.station;
+    const stY = Terrain.heightAt(st.x, st.z);
+
+    // ---------- Polaris Station: 6 buildings, pitched snow roofs,
+    // lit amber windows, radar dome, comms mast, drums, crates. ----------
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0xb8a888, roughness: 0.8 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0xe8eef5, roughness: 0.7 });
+    const winGeo = new THREE.PlaneGeometry(1.1, 0.9);
+    const winMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+    const winXforms = [];
+    const buildings = [
+      // [dx, dz, w, l, h, rotY] — w across, l along, rotY faces the lead.
+      [-52, -38, 9, 15, 5, 0.5], [-8, -52, 11, 18, 6, 0.1], [44, -30, 8, 13, 4.5, -0.4],
+      [-46, 22, 10, 14, 5, 0.9], [6, 34, 12, 20, 6.5, 0.05], [58, 28, 9, 12, 4.5, -0.7],
+    ];
+    buildings.forEach(([dx, dz, w, l, h, rot]) => {
+      const g = new THREE.Group();
+      const walls = new THREE.Mesh(new THREE.BoxGeometry(w, h, l), wallMat);
+      walls.position.y = h / 2;
+      walls.castShadow = true;
+      walls.receiveShadow = true;
+      g.add(walls);
+      // Pitched roof: two sloped slabs meeting at the ridge.
+      [-1, 1].forEach((side) => {
+        const slab = new THREE.Mesh(new THREE.BoxGeometry(w / 2 + 0.7, 0.3, l + 0.8), roofMat);
+        slab.position.set(side * w / 4.4, h + 1.1, 0);
+        slab.rotation.z = -side * 0.6;
+        slab.castShadow = true;
+        g.add(slab);
+      });
+      // Lit windows on the long walls (both sides) + the gable ends.
+      // Stored as building centre + building-local offset; the instancing
+      // loop below rotates the offset by the building's rot.
+      const perSide = Math.max(2, Math.floor(l / 5));
+      for (let i = 0; i < perSide; i++) {
+        const lx = -l / 2 + 2.5 + (i * (l - 5)) / Math.max(1, perSide - 1);
+        winXforms.push({ cx: dx, cz: dz, lx: -w / 2 - 0.06, lz: lx, y: stY + h * 0.55, ry: -Math.PI / 2, rot });
+        winXforms.push({ cx: dx, cz: dz, lx: w / 2 + 0.06, lz: lx, y: stY + h * 0.55, ry: Math.PI / 2, rot });
+      }
+      winXforms.push({ cx: dx, cz: dz, lx: 0, lz: -l / 2 - 0.06, y: stY + h * 0.55, ry: Math.PI, rot });
+      g.position.set(st.x + dx, stY, st.z + dz);
+      g.rotation.y = rot;
+      scene.add(g);
+    });
+    // One InstancedMesh for every station window.
+    const wins = new THREE.InstancedMesh(winGeo, winMat, winXforms.length);
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const eul = new THREE.Euler();
+    winXforms.forEach((w, i) => {
+      // Rotate the building-local offset by the building's rot, then add
+      // the building centre (THREE rotation.y: x' = x cos + z sin,
+      // z' = -x sin + z cos).
+      const c = Math.cos(w.rot), s = Math.sin(w.rot);
+      const wx = st.x + w.cx + w.lx * c + w.lz * s;
+      const wz = st.z + w.cz - w.lx * s + w.lz * c;
+      eul.set(0, w.ry + w.rot, 0);
+      q.setFromEuler(eul);
+      m4.compose(new THREE.Vector3(wx, w.y, wz), q, new THREE.Vector3(1, 1, 1));
+      wins.setMatrixAt(i, m4);
+    });
+    scene.add(wins);
+
+    // Radar dome (white hemisphere on a mast) + comms mast + beacon.
+    const domeBase = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.6, 7, 8),
+      new THREE.MeshStandardMaterial({ color: 0x8a94a0, roughness: 0.6 }));
+    domeBase.position.set(st.x - 70, stY + 3.5, st.z - 60);
+    scene.add(domeBase);
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(3.4, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: 0xeef2f7, roughness: 0.4 }),
+    );
+    dome.position.set(st.x - 70, stY + 7, st.z - 60);
+    scene.add(dome);
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 26, 8),
+      new THREE.MeshStandardMaterial({ color: 0x8a94a0, roughness: 0.6 }));
+    mast.position.set(st.x + 72, stY + 13, st.z + 48);
+    scene.add(mast);
+    stationBeacon = glowSprite(0xff5d5d, 22, 0.85);
+    stationBeacon.position.set(st.x + 72, stY + 27, st.z + 48);
+    scene.add(stationBeacon);
+
+    // Fuel drums (instanced) + crates (instanced) around the station.
+    const drumGeo = new THREE.CylinderGeometry(0.8, 0.8, 1.8, 10);
+    const drumMat = new THREE.MeshStandardMaterial({ color: 0xb84a2a, roughness: 0.6 });
+    const drums = new THREE.InstancedMesh(drumGeo, drumMat, 12);
+    const drng = makeRng(606);
+    for (let i = 0; i < 12; i++) {
+      const x = st.x - 80 + drng() * 160;
+      const z = st.z - 70 + drng() * 140;
+      m4.makeTranslation(x, Terrain.heightAt(x, z) + 0.9, z);
+      drums.setMatrixAt(i, m4);
+    }
+    scene.add(drums);
+    const crateGeo = new THREE.BoxGeometry(1.6, 1.6, 1.6);
+    const crateMat = new THREE.MeshStandardMaterial({ color: 0x9a7b4a, roughness: 0.8 });
+    const crates = new THREE.InstancedMesh(crateGeo, crateMat, 16);
+    for (let i = 0; i < 16; i++) {
+      const x = st.x - 75 + drng() * 150;
+      const z = st.z - 65 + drng() * 130;
+      eul.set(0, drng() * Math.PI, 0);
+      q.setFromEuler(eul);
+      m4.compose(new THREE.Vector3(x, Terrain.heightAt(x, z) + 0.8, z), q, new THREE.Vector3(1, 1, 1));
+      crates.setMatrixAt(i, m4);
+    }
+    scene.add(crates);
+    // Windsock on a pole at the station.
+    const sockPole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 9, 6),
+      new THREE.MeshStandardMaterial({ color: 0x8a94a0, roughness: 0.5, metalness: 0.6 }));
+    sockPole.position.set(st.x + 20, stY + 4.5, st.z - 70);
+    scene.add(sockPole);
+    const sock = new THREE.Mesh(new THREE.ConeGeometry(0.9, 3.4, 8),
+      new THREE.MeshStandardMaterial({ color: 0xe86a1e, roughness: 0.7, side: THREE.DoubleSide }));
+    sock.position.set(st.x + 21.2, stY + 8.6, st.z - 70);
+    sock.rotation.z = -Math.PI / 2.4;
+    scene.add(sock);
+
+    // ---------- Icebreaker in the lead: dark hull, white superstructure,
+    // lit windows, funnel glow. 60 m long — unmistakable in shot 2. ----------
+    const sh = CONFIG.ship;
+    const ship = new THREE.Group();
+    const hullShape = new THREE.Shape();
+    hullShape.moveTo(-30, 2.5);
+    hullShape.lineTo(-26, -1.5);
+    hullShape.lineTo(24, -1.5);
+    hullShape.lineTo(30, 1.0);
+    hullShape.lineTo(30, 4.5);
+    hullShape.lineTo(-28, 4.5);
+    hullShape.closePath();
+    const hullGeo = new THREE.ExtrudeGeometry(hullShape, { depth: 11, bevelEnabled: false });
+    hullGeo.translate(0, 0, -5.5);
+    hullGeo.rotateY(-Math.PI / 2); // length along Z, bow north
+    const hull = new THREE.Mesh(hullGeo, new THREE.MeshStandardMaterial({
+      // Icebreaker red — a dark hull vanishes against the dark lead water;
+      // red reads as a ship from 300 m, the way real icebreakers do.
+      color: 0x9a2a1e, roughness: 0.55, metalness: 0.3,
+    }));
+    hull.castShadow = true;
+    ship.add(hull);
+    const deckMat = new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.5 });
+    const super1 = new THREE.Mesh(new THREE.BoxGeometry(9, 4.5, 18), deckMat);
+    super1.position.set(0, 6.5, 8);
+    super1.castShadow = true;
+    ship.add(super1);
+    const super2 = new THREE.Mesh(new THREE.BoxGeometry(8, 3.5, 10), deckMat);
+    super2.position.set(0, 10.2, 8);
+    super2.castShadow = true;
+    ship.add(super2);
+    const bridgeWin = new THREE.Mesh(new THREE.BoxGeometry(8.2, 1.0, 6),
+      new THREE.MeshBasicMaterial({ color: 0xffc46b }));
+    bridgeWin.position.set(0, 11.0, 8);
+    ship.add(bridgeWin);
+    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.9, 7, 10),
+      new THREE.MeshStandardMaterial({ color: 0x8a2a20, roughness: 0.6 }));
+    funnel.position.set(0, 12.5, -4);
+    ship.add(funnel);
+    const funnelGlow = glowSprite(0xffb347, 12, 0.7);
+    funnelGlow.position.set(0, 16.4, -4);
+    ship.add(funnelGlow);
+    const shipMast = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.4, 9, 6),
+      new THREE.MeshStandardMaterial({ color: 0x8a94a0, roughness: 0.6 }));
+    shipMast.position.set(0, 15, -12);
+    ship.add(shipMast);
+    const shipLights = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1.2, 0.8),
+      new THREE.MeshBasicMaterial({ color: 0xffc46b }), 14,
+    );
+    for (let i = 0; i < 14; i++) {
+      const side = i % 2 ? 1 : -1;
+      const row = Math.floor(i / 2);
+      eul.set(0, side > 0 ? Math.PI / 2 : -Math.PI / 2, 0);
+      q.setFromEuler(eul);
+      m4.compose(new THREE.Vector3(side * 4.56, 6.2 + (row % 2) * 1.6, 2 + row * 2.2), q, new THREE.Vector3(1, 1, 1));
+      shipLights.setMatrixAt(i, m4);
+    }
+    ship.add(shipLights);
+    ship.position.set(sh.x, -0.5, sh.z);
+    ship.scale.set(1.35, 1.35, 1.35); // 81 m icebreaker — unmistakable
+    // Moored at an angle across the lead so the river shot (which looks
+    // straight up the lead) sees the broadside, not just the 15 m stern.
+    // 0.5 rad shows ~52 m of hull — the most the 55 m lead will take.
+    ship.rotation.y = 0.5;
+    scene.add(ship);
+
+    // ---------- Supply camps: orange tents with lit doors, crates, poles. ----------
+    const tentMat = new THREE.MeshStandardMaterial({
+      color: 0xc85a2a, roughness: 0.8, flatShading: true,
+    });
+    const doorMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+    CONFIG.camps.forEach((camp) => {
+      const cy = Terrain.heightAt(camp.x, camp.z);
+      const n = camp.name === 'east' ? 2 : 3;
+      for (let i = 0; i < n; i++) {
+        const tx = camp.x + (i - 1) * 9;
+        const tz = camp.z + (i % 2) * 7;
+        const tent = new THREE.Mesh(new THREE.ConeGeometry(2.6, 3.6, 7), tentMat);
+        tent.position.set(tx, cy + 1.8, tz);
+        tent.castShadow = true;
+        scene.add(tent);
+        const door = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.5), doorMat);
+        door.position.set(tx, cy + 0.9, tz + 2.62);
+        scene.add(door);
+      }
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 8, 6),
+        new THREE.MeshStandardMaterial({ color: 0x8a94a0, roughness: 0.5, metalness: 0.6 }));
+      pole.position.set(camp.x + 14, cy + 4, camp.z + 6);
+      scene.add(pole);
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.4),
+        new THREE.MeshBasicMaterial({ color: 0x39ff88, side: THREE.DoubleSide }));
+      flag.position.set(camp.x + 15.2, cy + 7.2, camp.z + 6);
+      scene.add(flag);
+    });
+
+    // ---------- Tern flocks: two white flocks, instanced, drift with the clock. ----------
+    const birdGeo = new THREE.ConeGeometry(0.45, 1.8, 4);
+    birdGeo.rotateX(Math.PI / 2);
+    birdGeo.scale(1, 0.3, 1);
+    ternMesh = new THREE.InstancedMesh(birdGeo, new THREE.MeshStandardMaterial({
+      color: 0xf2f6fa, roughness: 0.6,
+    }), 16);
+    ternBase = [];
+    const trng = makeRng(707);
+    for (let i = 0; i < 16; i++) {
+      const flock = i < 8 ? 0 : 1;
+      ternBase.push({
+        flock,
+        ox: (trng() - 0.5) * 26,
+        oy: (trng() - 0.5) * 8,
+        oz: (trng() - 0.5) * 18,
+        phase: trng() * 6.28,
+      });
+    }
+    scene.add(ternMesh);
+
+    // ---------- Distant airliner: high, far north-east, faint contrail. ----------
+    airliner = new THREE.Group();
+    const alWhite = new THREE.MeshStandardMaterial({ color: 0xe8ecf2, roughness: 0.5 });
+    const alBody = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 30, 10), alWhite);
+    alBody.rotation.x = Math.PI / 2;
+    airliner.add(alBody);
+    const alWing = new THREE.Mesh(new THREE.BoxGeometry(30, 0.4, 5), alWhite);
+    airliner.add(alWing);
+    const alTail = new THREE.Mesh(new THREE.BoxGeometry(10, 0.3, 3.5), alWhite);
+    alTail.position.set(0, 1.2, 14);
+    airliner.add(alTail);
+    const alNavL = glowSprite(0xff2a2a, 5, 0.8);
+    alNavL.position.set(-15, 0, 0);
+    airliner.add(alNavL);
+    const alNavR = glowSprite(0x2aff66, 5, 0.8);
+    alNavR.position.set(15, 0, 0);
+    airliner.add(alNavR);
+    const contrail = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 90),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.22, depthWrite: false,
+      }));
+    contrail.position.set(0, 0.5, 55);
+    airliner.add(contrail);
+    airliner.position.set(1500, 640, -2500);
+    scene.add(airliner);
   }
 
-  // Terns circle, the airliner crosses — all by sim time, so the
-  // screenshots stay reproducible.
-  function update(dt, clock) {
-    flocks.forEach((f) => {
-      const u = f.userData;
-      const a = clock * 0.045 + u.phase;
-      f.position.set(
-        u.cx + Math.cos(a) * u.r,
-        u.cy + Math.sin(clock * 0.3 + u.phase) * 12,
-        u.cz + Math.sin(a) * u.r,
-      );
-      f.rotation.y = -a;
-    });
-    if (airliner) {
-      const x = -2400 + ((clock * 14) % 4800);
-      airliner.position.set(x, 900, -1900);
+  // Terns drift, the airliner crosses slowly, the station beacon pulses —
+  // all pure functions of the game clock (deterministic).
+  function update(_dt, clock) {
+    if (ternMesh) {
+      const m4 = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const eul = new THREE.Euler();
+      const flocks = [
+        { x: -300 + Math.sin(clock * 0.03) * 120, y: 320, z: -600 + Math.cos(clock * 0.021) * 90, heading: 0.6 },
+        { x: 500 + Math.sin(clock * 0.025 + 2) * 100, y: 380, z: 300 + Math.cos(clock * 0.017 + 1) * 80, heading: -0.9 },
+      ];
+      ternBase.forEach((b, i) => {
+        const f = flocks[b.flock];
+        const flap = Math.sin(clock * 6 + b.phase) * 0.35;
+        eul.set(flap, f.heading, 0);
+        q.setFromEuler(eul);
+        m4.compose(
+          new THREE.Vector3(f.x + b.ox + Math.sin(clock * 0.4 + b.phase) * 4, f.y + b.oy, f.z + b.oz),
+          q, new THREE.Vector3(1, 1, 1),
+        );
+        ternMesh.setMatrixAt(i, m4);
+      });
+      ternMesh.instanceMatrix.needsUpdate = true;
     }
+    if (airliner) {
+      airliner.position.x = 1500 + Math.sin(clock * 0.008) * 800;
+      airliner.rotation.y = 0.35 + Math.cos(clock * 0.008) * 0.12;
+    }
+    if (stationBeacon) stationBeacon.material.opacity = 0.6 + 0.3 * Math.sin(clock * 1.4);
   }
 
   return { build, update };

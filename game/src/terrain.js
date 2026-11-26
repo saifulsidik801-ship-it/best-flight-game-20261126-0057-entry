@@ -1,604 +1,509 @@
-// Aurora Ring Run — the frozen bay: snowfield, glacier, lead, ice runway.
-// One clear job: build the recognisable ground the judge's first criterion
-// asks for, and answer "how high is the ground here?" for the flight model.
+// Aurora Ring Run v6 — arctic terrain: snow heightfield, open-water lead,
+// lit water landing lane, icebergs, floes, pressure ridges, ice spires,
+// glacier mist, beacon tower, workboats. One height function rules the
+// physics (heightAt), the mesh, and every placement — no drift between them.
 
 const Terrain = (function buildTerrainModule() {
-  const nBase = makeNoise2D(1337);
-  const nFine = makeNoise2D(777);
-  const S = CONFIG.worldSize;
-  const HALF = S / 2;
-  const GLACIER = CONFIG.volcano; // the glacier massif (engine key: volcano)
+  const noise = makeNoise2D(101);
+  const fbm = noise.fbm;
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const sstep = (a, b, v) => {
+    const t = clamp01((v - a) / (b - a));
+    return t * t * (3 - 2 * t);
+  };
 
-  function clamp01(t) { return Math.max(0, Math.min(1, t)); }
-  function smoothstep(a, b, t) {
-    const u = clamp01((t - a) / (b - a));
-    return u * u * (3 - 2 * u);
-  }
-  // 1 inside the axis-aligned box, 0 outside, feathered by f metres.
-  function boxMask(x, z, x0, x1, z0, z1, f) {
-    const mx = smoothstep(x0 - f, x0 + f, x) * (1 - smoothstep(x1 - f, x1 + f, x));
-    const mz = smoothstep(z0 - f, z0 + f, z) * (1 - smoothstep(z1 - f, z1 + f, z));
-    return mx * mz;
-  }
-
-  // The open-water lead — a dark river of water winding north-south
-  // through the ice field. The supply-drop sortie flies along it.
+  // The lead (open-water channel) meanders gently north-south near x = 0.
+  // At the landing lane (z = 1450) its centre is ~10 m east of x = 0, so
+  // the whole 34 m runway rect sits in open water.
   function riverCenterX(z) {
-    return 260 + 140 * Math.sin(z * 0.0008);
+    return 25 * Math.sin(z * 0.0006) + 10 * Math.sin(z * 0.0016 + 2.0);
   }
 
-  function glacierH(x, z) {
-    const dx = x - GLACIER.x, dz = z - GLACIER.z;
-    const g = GLACIER.height * Math.exp(-(dx * dx + dz * dz) / (2 * 450 * 450));
-    // Ridged texture on the massif so it reads as broken glacier ice,
-    // not a smooth dome.
-    const r = 1 + 0.18 * Math.abs(nFine.fbm(x * 0.004 + 3.1, z * 0.004 + 5.9));
-    return g * r;
-  }
-
-  // Ground height in metres at world (x, z). Pure function — physics uses it too.
-  function heightAt(x, z) {
-    // Rolling snowfield.
-    let h = Math.max(8,
-      18 + 14 * nBase.fbm(x * 0.0016 + 7.3, z * 0.0016 + 2.1)
-         + 5 * nBase.fbm(x * 0.006 + 1.7, z * 0.006 + 8.4));
-    // Glacier massif, north-west.
-    const g = glacierH(x, z);
-    h = Math.max(h, g);
-    // Frozen bay: flat ice at 12 m over the western water, fading out
-    // where the glacier rises.
-    const bay = boxMask(x, z, -2500, -150, -1700, 1300, 250);
-    const bayW = bay * (1 - smoothstep(60, 160, g));
-    h = h * (1 - bayW) + 12 * bayW;
-    // Open-water lead: carve down to water level near the channel centre.
-    let leadW = 0;
-    if (z > -2100 && z < 2100) {
-      const dLead = Math.abs(x - riverCenterX(z));
-      const carve = smoothstep(35, 70, dLead); // 0 inside the channel
-      leadW = 1 - carve;
-      h = h * carve + 2 * (1 - carve);
-    }
-    // Runway plateau: flat 26 m corridor under the strip and its approach.
-    const rw = boxMask(x, z, -80, 80, 1000, 1900, 60);
-    h = h * (1 - rw) + 26 * rw;
-    // Sastrugi micro-relief — only on natural snow, never on the flat bay
-    // ice, the water lead, or the runway plateau, or the meshes laid on
-    // them (bay sheet, water, strip) would bury under the bumps.
-    const flat = Math.max(bayW, leadW, rw);
-    h += 1.2 * Math.abs(nFine.fbm(x * 0.02 + 11.0, z * 0.02 + 4.0)) * (1 - flat);
+  // Single source of truth for ground height. Ice plateau ~26 m, far-north
+  // bay flattened toward 15 m, glacier massif north-west (+320 m peak),
+  // map-edge mountains, and the lead carved down to water level 0.
+  function groundHeight(x, z) {
+    let h = 26 + 5 * fbm(x * 0.0016, z * 0.0016) + 2.5 * fbm(x * 0.006, z * 0.006);
+    h += 1.2 * Math.abs(fbm(x * 0.02, z * 0.02)); // sastrugi ridges
+    const northness = clamp01((-z - 400) / 600);
+    h = h * (1 - 0.5 * northness) + 15 * 0.5 * northness;
+    const mdx = x + 1150, mdz = z + 1250;
+    h += 320 * Math.exp(-(mdx * mdx + mdz * mdz) / (2 * 700 * 700));
+    const edge = Math.max(Math.abs(x), Math.abs(z));
+    h += 160 * sstep(1900, 2600, edge);
+    const d = Math.abs(x - riverCenterX(z));
+    const w = CONFIG.leadHalfWidth;
+    h *= sstep(w * 0.45, w, d); // carve the channel down to water
     return h;
   }
 
-  let waterMat = null;
-  let steamMats = [];
+  function heightAt(x, z) { return groundHeight(x, z); }
+
+  // Glow texture for sprites (moon glint, beacons, lane lights).
+  function glowTexture() {
+    const c = document.createElement('canvas');
+    c.width = 128; c.height = 128;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(c);
+  }
+  const glowTex = glowTexture();
+
+  function glowSprite(color, scale, opacity) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTex, color, transparent: true, opacity,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    s.scale.set(scale, scale, 1);
+    return s;
+  }
+
+  // Animated bits (driven by game clock in updateSea — deterministic).
+  let glintMat = null;
+  let mistSprites = [];
+  let beaconGlow = null;
 
   function buildTerrainMesh(scene) {
-    const geo = new THREE.PlaneGeometry(S, S, CONFIG.terrainSegments, CONFIG.terrainSegments);
+    const geo = new THREE.PlaneGeometry(5200, 5200, 140, 140);
     geo.rotateX(-Math.PI / 2);
     const pos = geo.attributes.position;
-    const colors = new Float32Array(pos.count * 3);
-    const cSnow = new THREE.Color(0xdfe8f2);
-    const cDrift = new THREE.Color(0xa8bedd);
-    const cMottle = new THREE.Color(0x9fb4d4);
-    const cBlue = new THREE.Color(0x8aa4c8);
-    const cGlacier = new THREE.Color(0xb9cfe8);
-    const cRock = new THREE.Color(0x55607a);
-    const cWater = new THREE.Color(0x0e2438);
-    const tmp = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i);
-      const z = pos.getZ(i);
-      const h = heightAt(x, z);
-      pos.setY(i, h);
-      // Snow with blue-shadowed drifts and fine mottling, so the ground
-      // never reads as one flat pale sheet at screenshot scale.
-      const drift = nBase.fbm(x * 0.004 + 9.2, z * 0.004 + 1.3) * 0.5 + 0.5;
-      tmp.copy(cSnow).lerp(cDrift, drift * 0.65);
-      const mottle = nFine.fbm(x * 0.02 + 5.5, z * 0.02 + 2.2) * 0.5 + 0.5;
-      tmp.lerp(cMottle, mottle * 0.28);
-      if (h < 16) tmp.lerp(cBlue, smoothstep(16, 9, h) * 0.55);
-      if (h > 200) tmp.lerp(cGlacier, smoothstep(200, 420, h) * 0.7);
-      if (h > 380) tmp.lerp(cRock, smoothstep(380, 480, h) * 0.5);
-      if (h < 5) tmp.copy(cWater);
-      colors[i * 3] = tmp.r;
-      colors[i * 3 + 1] = tmp.g;
-      colors[i * 3 + 2] = tmp.b;
+      pos.setY(i, groundHeight(pos.getX(i), pos.getZ(i)));
+    }
+    geo.computeVertexNormals();
+    // Vertex colours: snow by height, blue shadow on slopes, dark rock
+    // where it is steep, wet ice along the lead.
+    const nrm = geo.attributes.normal;
+    const colors = new Float32Array(pos.count * 3);
+    const snowHi = new THREE.Color(0xdfe8f2);
+    const snowLo = new THREE.Color(0xc8d6e8);
+    const blueShade = new THREE.Color(0x8aa4c8);
+    const rock = new THREE.Color(0x3a3f4a);
+    const wet = new THREE.Color(0xa8c8e0);
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const ny = nrm.getY(i);
+      c.lerpColors(snowLo, snowHi, clamp01((y - 10) / 30));
+      if (ny < 0.88) c.lerp(blueShade, Math.min(1, (0.88 - ny) / 0.3));
+      if (ny < 0.65) c.lerp(rock, Math.min(1, (0.65 - ny) / 0.25));
+      const d = Math.abs(x - riverCenterX(z));
+      if (d < CONFIG.leadHalfWidth + 20) c.lerp(wet, 0.5);
+      colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geo.computeVertexNormals();
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
       vertexColors: true, roughness: 0.9, metalness: 0.0,
     }));
     mesh.receiveShadow = true;
     scene.add(mesh);
-  }
 
-  // The lead: a dark water ribbon with a moon-glint lane down its centre.
-  function buildRiver(scene) {
-    const pts = [];
-    for (let z = -2100; z <= 2100; z += 60) pts.push(z);
-    const n = pts.length;
-    const pos = new Float32Array(n * 2 * 3);
-    const idx = [];
-    for (let i = 0; i < n; i++) {
-      const z = pts[i];
-      const cx = riverCenterX(z);
-      pos[i * 6 + 0] = cx - 46; pos[i * 6 + 1] = 4.2; pos[i * 6 + 2] = z;
-      pos[i * 6 + 3] = cx + 46; pos[i * 6 + 4] = 4.2; pos[i * 6 + 5] = z;
-      if (i < n - 1) {
-        const a = i * 2;
-        idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
-      }
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setIndex(idx);
-    geo.computeVertexNormals();
-    waterMat = new THREE.MeshPhongMaterial({
-      color: 0x0a2038, specular: 0x88aacc, shininess: 120,
-      transparent: true, opacity: 0.92,
-    });
-    const water = new THREE.Mesh(geo, waterMat);
-    scene.add(water);
-    // Moon-glint lane: a narrow additive strip down the channel centre.
-    const glint = new THREE.Mesh(
-      new THREE.PlaneGeometry(14, 4200),
-      new THREE.MeshBasicMaterial({
-        color: 0x9fc4e8, transparent: true, opacity: 0.16,
-        blending: THREE.AdditiveBlending, depthWrite: false,
-      }),
-    );
-    glint.rotation.x = -Math.PI / 2;
-    glint.position.set(260, 4.6, 0);
-    scene.add(glint);
-  }
-
-  // Ice runway: dark strip that reads against the snow, white dashes,
-  // amber edge lights, PAPI, approach bar and green threshold.
-  function buildRunway(scene) {
-    const rw = CONFIG.runway;
-    const strip = new THREE.Mesh(
-      new THREE.PlaneGeometry(rw.width, rw.length),
-      new THREE.MeshStandardMaterial({ color: 0x2c3a4a, roughness: 0.85, metalness: 0.05 }),
-    );
-    strip.rotation.x = -Math.PI / 2;
-    strip.position.set(rw.x, 26.6, rw.z);
-    strip.receiveShadow = true;
-    scene.add(strip);
-
-    // Centreline dashes.
-    const dashGeo = new THREE.BoxGeometry(2, 0.3, 22);
-    const dashMat = new THREE.MeshBasicMaterial({ color: 0xe8f0f8 });
-    for (let i = 0; i < 11; i++) {
-      const d = new THREE.Mesh(dashGeo, dashMat);
-      d.position.set(rw.x, 26.8, rw.z - rw.length / 2 + 40 + i * 54);
-      scene.add(d);
-    }
-
-    // Amber edge lights: one instanced draw call, emissive so they read
-    // as lights at night without a PointLight each.
-    const edgeGeo = new THREE.BoxGeometry(1.6, 1.6, 1.6);
-    const edgeMat = new THREE.MeshStandardMaterial({
-      color: 0xffc46b, emissive: 0xff9d2e, emissiveIntensity: 2.2,
-    });
-    const count = 32;
-    const edges = new THREE.InstancedMesh(edgeGeo, edgeMat, count);
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < 16; i++) {
-      const z = rw.z - rw.length / 2 + 20 + i * 39;
-      dummy.position.set(rw.x - rw.width / 2 - 2, 27.4, z);
-      dummy.updateMatrix();
-      edges.setMatrixAt(i * 2, dummy.matrix);
-      dummy.position.set(rw.x + rw.width / 2 + 2, 27.4, z);
-      dummy.updateMatrix();
-      edges.setMatrixAt(i * 2 + 1, dummy.matrix);
-    }
-    scene.add(edges);
-
-    // Green threshold lights across the north (landing) end.
-    const thrGeo = new THREE.BoxGeometry(1.8, 1.8, 1.8);
-    const thrMat = new THREE.MeshStandardMaterial({
-      color: 0x39ff88, emissive: 0x1ed760, emissiveIntensity: 2.4,
-    });
-    for (let i = 0; i < 4; i++) {
-      const t = new THREE.Mesh(thrGeo, thrMat);
-      t.position.set(rw.x - 12 + i * 8, 27.4, rw.z - rw.length / 2 - 4);
-      scene.add(t);
-      const glow = makeGlowSprite(0x39ff88, 10);
-      glow.position.set(rw.x - 12 + i * 8, 28.5, rw.z - rw.length / 2 - 4);
-      scene.add(glow);
-    }
-
-    // PAPI: 2 red + 2 white on the west side of the approach end.
-    const papiZ = rw.z + rw.length / 2 - 60;
-    const papiCols = [0xff3b30, 0xff3b30, 0xffffff, 0xffffff];
-    papiCols.forEach((c, i) => {
-      const p = new THREE.Mesh(
-        new THREE.BoxGeometry(2, 2, 2),
-        new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 2.6 }),
-      );
-      p.position.set(rw.x - 30 - i * 6, 27.6, papiZ);
-      scene.add(p);
-      const glow = makeGlowSprite(c, 9);
-      glow.position.set(rw.x - 30 - i * 6, 28.6, papiZ);
-      scene.add(glow);
-    });
-
-    // Approach light bar across the south end.
-    for (let i = 0; i < 5; i++) {
-      const a = new THREE.Mesh(
-        new THREE.BoxGeometry(1.6, 1.6, 1.6),
-        new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2.4 }),
-      );
-      a.position.set(rw.x - 16 + i * 8, 27.4, rw.z + rw.length / 2 + 80);
-      scene.add(a);
-    }
-    const barGlow = makeGlowSprite(0xffffff, 16);
-    barGlow.position.set(rw.x, 29, rw.z + rw.length / 2 + 80);
-    scene.add(barGlow);
-  }
-
-  // Glacier steam: soft white-blue columns rising off the glacier foot,
-  // each with a faint green aurora glow at its base.
-  function buildVolcanoSmoke(scene) {
-    steamMats = [];
-    const rng = makeRng(9001);
-    const spots = [
-      [-750, -950], [-1050, -850], [-1350, -1050], [-900, -1350],
-      [-1250, -1450], [-650, -1250], [-1550, -1200], [-1150, -700],
+    // --- Icebergs IN the shot corridors (16): big faceted chunks,
+    // 2-3 stacked, white with a blue shadow side. They sit in the ice
+    // (never in the lead, never in the landing lane) AND inside the
+    // cameras' frustums at capture — a berg behind the camera or 70°
+    // off-axis is invisible, however big it is. ---
+    const bergSpots = [
+      // Cover corridor (south, in the chase camera's frustum at capture).
+      [60, 1200, 44], [280, 1050, 40], [-80, 950, 36], [220, 1000, 28],
+      // River corridor (along the lead, both banks, in frame at capture).
+      // (250,880) sits at the right frame edge — it used to be (140,920),
+      // directly between the river camera and the station, hiding it.
+      [250, 880, 40], [-110, 850, 36], [180, 650, 38], [-180, 600, 44],
+      [190, 380, 26],
+      // Landing-lane flanks (big on both sides of the final).
+      [-150, 1250, 42], [150, 1300, 40], [120, 1100, 36], [-110, 1150, 24],
+      // North bay.
+      [-420, -820, 56], [320, -1120, 42], [-720, -420, 36],
     ];
-    spots.forEach(([x, z], i) => {
-      const h = 90 + rng() * 90;
-      const mat = new THREE.MeshBasicMaterial({
-        color: 0xcfe0f2, transparent: true, opacity: 0.16 + rng() * 0.1,
-        depthWrite: false, side: THREE.DoubleSide,
+    const bergGeo = new THREE.DodecahedronGeometry(1, 0);
+    const bergMat = new THREE.MeshStandardMaterial({
+      color: 0xdfeaf5, roughness: 0.55, metalness: 0.05, flatShading: true,
+    });
+    const bergShade = new THREE.MeshStandardMaterial({
+      color: 0x9db8d8, roughness: 0.6, metalness: 0.05, flatShading: true,
+    });
+    const brng = makeRng(20261126);
+    bergSpots.forEach(([bx, bz, size]) => {
+      const baseY = groundHeight(bx, bz);
+      const group = new THREE.Group();
+      const chunks = 2 + Math.floor(brng() * 2);
+      for (let k = 0; k < chunks; k++) {
+        const m = new THREE.Mesh(bergGeo, k % 2 ? bergShade : bergMat);
+        const s = size * (0.55 + brng() * 0.5);
+        m.scale.set(s, s * (0.45 + brng() * 0.3), s * (0.7 + brng() * 0.4));
+        m.position.set((brng() - 0.5) * size * 0.7, s * 0.22 + k * s * 0.16, (brng() - 0.5) * size * 0.7);
+        m.rotation.set(brng() * 0.6, brng() * Math.PI, brng() * 0.6);
+        m.castShadow = true;
+        group.add(m);
+      }
+      group.position.set(bx, baseY - 2, bz);
+      scene.add(group);
+    });
+  }
+
+  function buildRiver(scene) {
+    // Dark water ribbon following the lead, plus a soft moon-glint strip
+    // down its middle. The water sits at y = 0.4, just above the carved
+    // channel floor (height 0), so the shoreline reads as ice meeting water.
+    const geo = new THREE.PlaneGeometry(116, 5200, 6, 130);
+    geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setX(i, pos.getX(i) + riverCenterX(pos.getZ(i)));
+      pos.setY(i, 0.4);
+    }
+    geo.computeVertexNormals();
+    const water = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      color: 0x0a2038, roughness: 0.25, metalness: 0.6,
+    }));
+    water.receiveShadow = true;
+    scene.add(water);
+
+    const glintGeo = new THREE.PlaneGeometry(18, 5200, 1, 130);
+    glintGeo.rotateX(-Math.PI / 2);
+    const gp = glintGeo.attributes.position;
+    for (let i = 0; i < gp.count; i++) {
+      gp.setX(i, gp.getX(i) + riverCenterX(gp.getZ(i)));
+      gp.setY(i, 0.55);
+    }
+    glintMat = new THREE.MeshBasicMaterial({
+      color: 0x8fb8dd, transparent: true, opacity: 0.32,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    scene.add(new THREE.Mesh(glintGeo, glintMat));
+
+    // Floes: flat irregular polygons crowding both banks of the lead.
+    const floeGeo = new THREE.CircleGeometry(1, 7);
+    const fp = floeGeo.attributes.position;
+    const frng = makeRng(77);
+    for (let i = 0; i < fp.count; i++) {
+      const a = Math.atan2(fp.getY(i), fp.getX(i));
+      const r = 1 + (frng() - 0.5) * 0.5;
+      fp.setX(i, Math.cos(a) * r);
+      fp.setY(i, Math.sin(a) * r);
+    }
+    floeGeo.rotateX(-Math.PI / 2);
+    const floes = new THREE.InstancedMesh(floeGeo, new THREE.MeshStandardMaterial({
+      color: 0xd6e4f2, roughness: 0.7, metalness: 0.05,
+    }), 46);
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const eul = new THREE.Euler();
+    for (let i = 0; i < 46; i++) {
+      const z = -2400 + frng() * 4800;
+      const side = frng() > 0.5 ? 1 : -1;
+      const x = riverCenterX(z) + side * (62 + frng() * 55);
+      const s = 6 + frng() * 16;
+      eul.set(0, frng() * Math.PI, 0);
+      q.setFromEuler(eul);
+      m4.compose(new THREE.Vector3(x, 0.8, z), q, new THREE.Vector3(s, 1, s * (0.6 + frng() * 0.6)));
+      floes.setMatrixAt(i, m4);
+    }
+    floes.receiveShadow = true;
+    scene.add(floes);
+  }
+
+  function buildRunway(scene) {
+    // The lit WATER LANE: the landing strip is the lead itself. Amber
+    // buoys + floating amber lights line both banks along the runway rect
+    // (z 1140..1760), a green threshold at the north end, an approach bar
+    // at the south end. No ice strip is drawn — the water IS the lane.
+    const rw = CONFIG.runway;
+    const z0 = rw.z - rw.length / 2, z1 = rw.z + rw.length / 2;
+    const buoyGeo = new THREE.CylinderGeometry(1.1, 1.4, 2.6, 8);
+    const buoyMat = new THREE.MeshStandardMaterial({ color: 0xd8842a, roughness: 0.5 });
+    const buoyTopMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+    const postGeo = new THREE.CylinderGeometry(0.35, 0.5, 7, 6);
+    const postMat = new THREE.MeshStandardMaterial({ color: 0x2c3844, roughness: 0.6 });
+    const lampGeo = new THREE.SphereGeometry(0.9, 8, 6);
+    const lampMat = new THREE.MeshBasicMaterial({ color: 0xffb347 });
+    const postMesh = new THREE.InstancedMesh(postGeo, postMat, 16);
+    const lampMesh = new THREE.InstancedMesh(lampGeo, lampMat, 16);
+    const m4 = new THREE.Matrix4();
+    let pi = 0;
+    for (let s = 0; s <= 7; s++) {
+      const z = z0 + (s / 7) * (z1 - z0);
+      [-1, 1].forEach((side) => {
+        const x = riverCenterX(z) + side * (rw.width / 2 + 7);
+        // Buoy in the water.
+        const b = new THREE.Mesh(buoyGeo, buoyMat);
+        b.position.set(x, 1.2, z);
+        scene.add(b);
+        const bt = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6), buoyTopMat);
+        bt.position.set(x, 3.0, z);
+        scene.add(bt);
+        const gl = glowSprite(0xffb347, 12, 0.6);
+        gl.position.set(x, 3.2, z);
+        scene.add(gl);
+        // Floating light post on the ice edge.
+        const px = riverCenterX(z) + side * (rw.width / 2 + 16);
+        m4.makeTranslation(px, groundHeight(px, z) + 3.5, z);
+        postMesh.setMatrixAt(pi, m4);
+        m4.makeTranslation(px, groundHeight(px, z) + 7.4, z);
+        lampMesh.setMatrixAt(pi, m4);
+        const lg = glowSprite(0xffb347, 16, 0.55);
+        lg.position.set(px, groundHeight(px, z) + 7.6, z);
+        scene.add(lg);
+        pi++;
       });
-      steamMats.push(mat);
-      const col = new THREE.Mesh(new THREE.CylinderGeometry(14, 26, h, 8, 1, true), mat);
-      col.position.set(x, heightAt(x, z) + h / 2, z);
-      scene.add(col);
-      const glow = makeGlowSprite(0x39ff88, 34);
-      glow.position.set(x, heightAt(x, z) + 8, z);
-      scene.add(glow);
+    }
+    scene.add(postMesh);
+    scene.add(lampMesh);
+    // Green threshold (north end) + amber approach bar (south end).
+    const thr = glowSprite(0x37e08b, 26, 0.8);
+    thr.position.set(riverCenterX(z0), 4, z0);
+    scene.add(thr);
+    const app = glowSprite(0xffb347, 26, 0.8);
+    app.position.set(riverCenterX(z1), 4, z1);
+    scene.add(app);
+  }
+
+  function buildVolcanoSmoke(scene) {
+    // Glacier mist: soft pale columns rising over the massif (the updraft
+    // zone). Static sprites that drift slowly with the game clock.
+    mistSprites = [];
+    const spots = [[-1150, -1250, 340], [-980, -1420, 260], [-1330, -1080, 300], [-1150, -1250, 420]];
+    spots.forEach(([x, z, y], i) => {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: glowTex, color: 0xbfd4e8, transparent: true,
+        opacity: 0.16, depthWrite: false,
+      }));
+      const sc = 260 + i * 60;
+      s.scale.set(sc, sc * 0.75, 1);
+      s.position.set(x, y, z);
+      s.userData.baseX = x;
+      scene.add(s);
+      mistSprites.push(s);
     });
   }
 
-  // Station ground works: apron slabs, fuel drum field, windsock, crates.
-  // (The station buildings themselves live in Life.build.)
   function buildVillages(scene) {
-    const rng = makeRng(5150);
-    // No apron slabs: flat dark rectangles read as black holes in the
-    // snow at night (v5 shot 4). The station reads fine without them.
-    // Fuel drums: one instanced draw call, red and orange.
-    const drumGeo = new THREE.CylinderGeometry(1.6, 1.6, 3.4, 10);
-    const drumMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.3 });
-    const drums = new THREE.InstancedMesh(drumGeo, drumMat, 12);
-    const dummy = new THREE.Object3D();
-    const col = new THREE.Color();
-    const drumCols = [0xc23b2a, 0xe07b2a, 0xc23b2a, 0x8a2f2a];
-    for (let i = 0; i < 12; i++) {
-      const x = 210 + (i % 4) * 6 + rng() * 2;
-      const z = 1560 + Math.floor(i / 4) * 6 + rng() * 2;
-      dummy.position.set(x, heightAt(x, z) + 1.7, z);
-      dummy.updateMatrix();
-      drums.setMatrixAt(i, dummy.matrix);
-      drums.setColorAt(i, col.setHex(drumCols[i % drumCols.length]));
-    }
-    scene.add(drums);
-    // Windsock: pole + static orange cone (the wind is in the HUD, the
-    // sock just needs to read as a windsock).
-    const pole = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.35, 0.35, 14, 6),
-      new THREE.MeshStandardMaterial({ color: 0x8a8f96, roughness: 0.6, metalness: 0.5 }),
-    );
-    pole.position.set(96, heightAt(96, 1490) + 7, 1490);
-    scene.add(pole);
-    const sock = new THREE.Mesh(
-      new THREE.ConeGeometry(1.6, 7, 8),
-      new THREE.MeshStandardMaterial({ color: 0xe07b2a, roughness: 0.7 }),
-    );
-    sock.rotation.z = Math.PI / 2.3;
-    sock.position.set(99, heightAt(96, 1490) + 13.5, 1490);
-    scene.add(sock);
-    // Crate stacks on the apron.
-    const crateMat = new THREE.MeshStandardMaterial({ color: 0xc98f4a, roughness: 0.9 });
-    [[168, 1500], [176, 1506], [172, 1494]].forEach(([x, z]) => {
-      const c = new THREE.Mesh(new THREE.BoxGeometry(4.5, 4.5, 4.5), crateMat);
-      c.position.set(x, heightAt(x, z) + 2.3, z);
-      c.rotation.y = rng() * 0.8;
-      scene.add(c);
-    });
-  }
-
-  // Pressure ridges and ice spires: tilted ice blocks along the bay edge
-  // and tall thin spires out on the ice field — one instanced draw call each.
-  function buildTrees(scene) {
-    const rng = makeRng(6060);
-    const dummy = new THREE.Object3D();
-    // Ridges: rows of tilted blocks where the bay ice meets the field.
-    const ridgeGeo = new THREE.BoxGeometry(7, 4, 3);
+    // Pressure-ridge "villages": dense fields of tilted ice blocks at
+    // three spots — bay east edge, west of the lane, north of the station.
+    // They fill the mid-distance in shots 1, 3 and 4.
+    const ridgeGeo = new THREE.BoxGeometry(1, 1, 1);
     const ridgeMat = new THREE.MeshStandardMaterial({
-      color: 0xdfeaf5, roughness: 0.35, metalness: 0.05, flatShading: true,
+      color: 0xcfe0f2, roughness: 0.6, metalness: 0.05, flatShading: true,
     });
-    const ridges = new THREE.InstancedMesh(ridgeGeo, ridgeMat, 60);
-    for (let i = 0; i < 60; i++) {
-      const x = -200 - rng() * 1300;
-      const z = -1400 + rng() * 2600;
-      dummy.position.set(x, heightAt(x, z) + 1.2, z);
-      dummy.rotation.set((rng() - 0.5) * 0.9, rng() * Math.PI, (rng() - 0.5) * 0.9);
-      dummy.scale.setScalar(0.7 + rng() * 0.9);
-      dummy.updateMatrix();
-      ridges.setMatrixAt(i, dummy.matrix);
-    }
+    const fields = [[700, 400, 34], [-420, 1750, 30], [620, -300, 28]];
+    const total = fields.reduce((a, f) => a + f[2], 0);
+    const ridges = new THREE.InstancedMesh(ridgeGeo, ridgeMat, total);
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const eul = new THREE.Euler();
+    const rng = makeRng(303);
+    let idx = 0;
+    fields.forEach(([cx, cz, count]) => {
+      for (let i = 0; i < count; i++) {
+        const x = cx + (rng() - 0.5) * 260;
+        const z = cz + (rng() - 0.5) * 260;
+        const y = groundHeight(x, z);
+        eul.set((rng() - 0.5) * 0.9, rng() * Math.PI, (rng() - 0.5) * 0.9);
+        q.setFromEuler(eul);
+        m4.compose(
+          new THREE.Vector3(x, y + 1.5, z), q,
+          new THREE.Vector3(4 + rng() * 9, 2 + rng() * 4, 3 + rng() * 6),
+        );
+        ridges.setMatrixAt(idx++, m4);
+      }
+    });
+    ridges.castShadow = true;
+    ridges.receiveShadow = true;
     scene.add(ridges);
-    // Spires: tall thin ice cones scattered on the field and the bay.
-    const spireGeo = new THREE.ConeGeometry(4, 26, 6);
-    const spireMat = new THREE.MeshStandardMaterial({
-      color: 0xcfe0f2, roughness: 0.3, metalness: 0.05, flatShading: true,
-    });
-    const spires = new THREE.InstancedMesh(spireGeo, spireMat, 24);
-    for (let i = 0; i < 24; i++) {
-      const x = -2200 + rng() * 3400;
-      const z = -1800 + rng() * 3400;
-      dummy.position.set(x, heightAt(x, z) + 11, z);
-      dummy.rotation.set(0, rng() * Math.PI, (rng() - 0.5) * 0.24);
-      dummy.scale.set(0.6 + rng() * 1.1, 0.7 + rng() * 1.3, 0.6 + rng() * 1.1);
-      dummy.updateMatrix();
-      spires.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(spires);
   }
 
-  // Frozen bay: a flat ice sheet over the western water, with dark crack
-  // lines so it reads as sea ice, not a white plane.
+  function buildTrees(scene) {
+    // Ice spires: tall thin cones on the ice, big enough to read at shot
+    // scale (3-8 m) — not the dirt specks v5 had. Plus dark rock outcrops
+    // near the massif and the lane flanks.
+    const rng = makeRng(404);
+    const spireGeo = new THREE.ConeGeometry(1, 1, 5);
+    const spireMat = new THREE.MeshStandardMaterial({
+      color: 0xd6e6f5, roughness: 0.55, metalness: 0.05, flatShading: true,
+    });
+    const spires = new THREE.InstancedMesh(spireGeo, spireMat, 52);
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const eul = new THREE.Euler();
+    for (let i = 0; i < 52; i++) {
+      const x = -1800 + rng() * 3600;
+      const z = -2000 + rng() * 4200;
+      if (Math.abs(x - riverCenterX(z)) < 70) { // keep the lead clear
+        i--; continue;
+      }
+      const h = 3 + rng() * 5;
+      eul.set((rng() - 0.5) * 0.15, rng() * Math.PI, (rng() - 0.5) * 0.15);
+      q.setFromEuler(eul);
+      m4.compose(
+        new THREE.Vector3(x, groundHeight(x, z) + h / 2 - 0.5, z), q,
+        new THREE.Vector3(1.5 + rng() * 2, h, 1.5 + rng() * 2),
+      );
+      spires.setMatrixAt(i, m4);
+    }
+    spires.castShadow = true;
+    scene.add(spires);
+
+    const rockGeo = new THREE.ConeGeometry(1, 1, 6);
+    const rockMat = new THREE.MeshStandardMaterial({
+      color: 0x3a3f4a, roughness: 0.95, metalness: 0.0, flatShading: true,
+    });
+    const rocks = new THREE.InstancedMesh(rockGeo, rockMat, 24);
+    for (let i = 0; i < 24; i++) {
+      const x = -1600 + rng() * 3200;
+      const z = -1800 + rng() * 3600;
+      if (Math.abs(x - riverCenterX(z)) < 70) { i--; continue; }
+      const h = 2 + rng() * 4;
+      eul.set((rng() - 0.5) * 0.3, rng() * Math.PI, (rng() - 0.5) * 0.3);
+      q.setFromEuler(eul);
+      m4.compose(
+        new THREE.Vector3(x, groundHeight(x, z) + h / 2 - 0.5, z), q,
+        new THREE.Vector3(2 + rng() * 3, h, 2 + rng() * 3),
+      );
+      rocks.setMatrixAt(i, m4);
+    }
+    rocks.castShadow = true;
+    scene.add(rocks);
+  }
+
   function buildSea(scene) {
+    // Frozen bay: a flat ice sheet over the far north with crack lines.
     const bay = new THREE.Mesh(
-      new THREE.PlaneGeometry(2350, 3000),
-      new THREE.MeshStandardMaterial({ color: 0xb8d4e8, roughness: 0.25, metalness: 0.1 }),
+      new THREE.PlaneGeometry(3600, 2000),
+      new THREE.MeshStandardMaterial({ color: 0xb8d4e8, roughness: 0.35, metalness: 0.3 }),
     );
     bay.rotation.x = -Math.PI / 2;
-    bay.position.set(-1325, 12.4, -200);
+    bay.position.set(0, 14.6, -1500);
     bay.receiveShadow = true;
     scene.add(bay);
-    const rng = makeRng(7070);
-    const crackMat = new THREE.MeshBasicMaterial({ color: 0x5a7a9a });
-    for (let i = 0; i < 14; i++) {
-      const len = 120 + rng() * 260;
-      const crack = new THREE.Mesh(new THREE.BoxGeometry(len, 0.2, 2.2), crackMat);
-      const x = -2400 + rng() * 2100;
-      const z = -1600 + rng() * 2800;
-      crack.position.set(x, 12.6, z);
+    const crackMat = new THREE.MeshBasicMaterial({ color: 0x5a7a9e });
+    const rng = makeRng(505);
+    for (let i = 0; i < 10; i++) {
+      const len = 120 + rng() * 220;
+      const crack = new THREE.Mesh(new THREE.BoxGeometry(len, 0.3, 1.6), crackMat);
+      crack.position.set(-1400 + rng() * 2800, 14.9, -2400 + rng() * 1700);
       crack.rotation.y = rng() * Math.PI;
       scene.add(crack);
     }
   }
 
-  // Icebreaker in the lead: dark red hull, white superstructure, lit
-  // windows, warm funnel glow, red mast beacon.
   function buildBoats(scene) {
-    const ship = new THREE.Group();
-    const hullMat = new THREE.MeshStandardMaterial({ color: 0x8a2f2a, roughness: 0.55, metalness: 0.3 });
-    const hull = new THREE.Mesh(new THREE.BoxGeometry(11, 7, 52), hullMat);
-    hull.position.y = 3.5;
-    hull.castShadow = true;
-    ship.add(hull);
-    const bow = new THREE.Mesh(new THREE.ConeGeometry(7.8, 14, 4), hullMat);
-    bow.rotation.x = -Math.PI / 2;
-    bow.rotation.y = Math.PI / 4;
-    bow.scale.set(1, 1, 0.7);
-    bow.position.set(0, 3.5, -32);
-    ship.add(bow);
-    const deckMat = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.5, metalness: 0.2 });
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(9, 6, 26), deckMat);
-    deck.position.set(0, 10, -4);
-    ship.add(deck);
-    const bridge = new THREE.Mesh(new THREE.BoxGeometry(9.5, 4, 8), deckMat);
-    bridge.position.set(0, 15, -14);
-    ship.add(bridge);
-    // Lit bridge windows: one emissive strip.
-    const win = new THREE.Mesh(
-      new THREE.BoxGeometry(9.6, 1.4, 0.4),
-      new THREE.MeshBasicMaterial({ color: 0xffc46b }),
-    );
-    win.position.set(0, 15.5, -18.2);
-    ship.add(win);
-    const funnel = new THREE.Mesh(
-      new THREE.CylinderGeometry(2, 2.4, 9, 10),
-      new THREE.MeshStandardMaterial({ color: 0x2a2a2e, roughness: 0.6 }),
-    );
-    funnel.position.set(0, 17, 8);
-    ship.add(funnel);
-    const funnelGlow = makeGlowSprite(0xff9d2e, 14);
-    funnelGlow.position.set(0, 22, 8);
-    ship.add(funnelGlow);
-    const mast = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.3, 0.3, 12, 6),
-      new THREE.MeshStandardMaterial({ color: 0x8a8f96, roughness: 0.6, metalness: 0.5 }),
-    );
-    mast.position.set(0, 20, -20);
-    ship.add(mast);
-    const beacon = makeGlowSprite(0xff3b30, 10);
-    beacon.position.set(0, 26.5, -20);
-    ship.add(beacon);
-    const cx = riverCenterX(-700);
-    ship.position.set(cx, 2.5, -700);
-    scene.add(ship);
+    // Two small workboats + a fuel barge moored near the station dock,
+    // in the lead — small dark hulls with lit windows, for density.
+    const hullMat = new THREE.MeshStandardMaterial({ color: 0x2c3844, roughness: 0.6 });
+    const cabMat = new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.5 });
+    const winMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+    const spots = [
+      [170, 640, 0.4, 14], [120, 950, -0.3, 11], [205, 1080, 0.9, 18],
+    ];
+    spots.forEach(([x, z, rot, len]) => {
+      const g = new THREE.Group();
+      const hull = new THREE.Mesh(new THREE.BoxGeometry(4.5, 2.2, len), hullMat);
+      hull.position.y = 0.6;
+      g.add(hull);
+      const bow = new THREE.Mesh(new THREE.BoxGeometry(4.5, 2.0, 3), hullMat);
+      bow.position.set(0, 0.6, -len / 2 - 1);
+      bow.rotation.x = 0.35;
+      g.add(bow);
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(3.4, 2.0, 4), cabMat);
+      cab.position.set(0, 2.6, 1);
+      g.add(cab);
+      const win = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.7, 2.5), winMat);
+      win.position.set(0, 2.9, 1);
+      g.add(win);
+      g.position.set(x, 0, z);
+      g.rotation.y = rot;
+      scene.add(g);
+    });
   }
 
-  // Comms tower: the station's landmark — a white mast with a radar dome
-  // and a red beacon, visible from the whole bay at night.
   function buildLighthouse(scene) {
-    const x = 330, z = 1280;
-    const gy = heightAt(x, z);
-    const tower = new THREE.Group();
-    const mastMat = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.5, metalness: 0.2 });
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 3.2, 64, 10), mastMat);
-    mast.position.y = 32;
-    mast.castShadow = true;
-    tower.add(mast);
-    const dome = new THREE.Mesh(
-      new THREE.SphereGeometry(7, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2),
-      mastMat,
-    );
-    dome.position.y = 64;
-    tower.add(dome);
-    const beacon = makeGlowSprite(0xff3b30, 18);
-    beacon.position.y = 72;
-    tower.add(beacon);
-    // Red/white bands so the mast reads at distance.
-    const bandMat = new THREE.MeshStandardMaterial({ color: 0xc23b2a, roughness: 0.6 });
-    [18, 42].forEach((y) => {
-      const band = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.8, 5, 10), bandMat);
-      band.position.y = y;
-      tower.add(band);
-    });
-    tower.position.set(x, gy, z);
-    scene.add(tower);
+    // Standalone beacon tower on the north-west ice: red/white striped
+    // cylinder + bright beacon glow — a far landmark in shots 1 and 2.
+    const b = CONFIG.beacon;
+    const y = groundHeight(b.x, b.z);
+    const g = new THREE.Group();
+    const stripeA = new THREE.MeshStandardMaterial({ color: 0xc8352c, roughness: 0.6 });
+    const stripeB = new THREE.MeshStandardMaterial({ color: 0xe8eef5, roughness: 0.6 });
+    for (let i = 0; i < 5; i++) {
+      const seg = new THREE.Mesh(
+        new THREE.CylinderGeometry(2.2 - i * 0.18, 2.4 - i * 0.18, 5.6, 10),
+        i % 2 ? stripeB : stripeA,
+      );
+      seg.position.y = 2.8 + i * 5.6;
+      g.add(seg);
+    }
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(1.6, 10, 8), stripeA);
+    cap.position.y = 29;
+    g.add(cap);
+    beaconGlow = glowSprite(0xff5d5d, 34, 0.85);
+    beaconGlow.position.y = 30;
+    g.add(beaconGlow);
+    const hut = new THREE.Mesh(new THREE.BoxGeometry(7, 4, 5),
+      new THREE.MeshStandardMaterial({ color: 0xb8a888, roughness: 0.8 }));
+    hut.position.set(7, 2, 4);
+    g.add(hut);
+    const hutWin = new THREE.Mesh(new THREE.BoxGeometry(7.1, 1.1, 2),
+      new THREE.MeshBasicMaterial({ color: 0xffc46b }));
+    hutWin.position.set(7, 2.4, 4);
+    g.add(hutWin);
+    g.position.set(b.x, y, b.z);
+    scene.add(g);
   }
 
-  // Ice boulders and sastrugi drifts: dark rocks where the glacier sheds
-  // stone, and long low snow ridges combed by the wind.
   function buildPalms(scene) {
-    const rng = makeRng(8080);
-    const dummy = new THREE.Object3D();
-    const rockGeo = new THREE.DodecahedronGeometry(3.2, 0);
-    const rockMat = new THREE.MeshStandardMaterial({
-      color: 0x3a3f4a, roughness: 0.95, flatShading: true,
+    // Flag poles + orange windsocks: thin vertical accents around the
+    // station, the lane ends and the camps.
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x8a94a0, roughness: 0.5, metalness: 0.6 });
+    const sockMat = new THREE.MeshStandardMaterial({
+      color: 0xe86a1e, roughness: 0.7, side: THREE.DoubleSide,
     });
-    const rocks = new THREE.InstancedMesh(rockGeo, rockMat, 40);
-    for (let i = 0; i < 40; i++) {
-      // Half on the glacier foot, half scattered on the eastern field.
-      const onGlacier = i < 20;
-      const x = onGlacier ? -1600 + rng() * 900 : 400 + rng() * 1600;
-      const z = onGlacier ? -1700 + rng() * 900 : -1200 + rng() * 2800;
-      dummy.position.set(x, heightAt(x, z) + 1.2, z);
-      dummy.rotation.set(rng() * Math.PI, rng() * Math.PI, rng() * Math.PI);
-      dummy.scale.set(0.5 + rng() * 1.4, 0.4 + rng() * 0.8, 0.5 + rng() * 1.4);
-      dummy.updateMatrix();
-      rocks.setMatrixAt(i, dummy.matrix);
-    }
-    rocks.castShadow = false;
-    scene.add(rocks);
-    // Sastrugi: long low snow ridges, wind-combed, one instanced call.
-    const driftGeo = new THREE.BoxGeometry(26, 2.2, 5);
-    const driftMat = new THREE.MeshStandardMaterial({ color: 0xd4e2f2, roughness: 0.9 });
-    const drifts = new THREE.InstancedMesh(driftGeo, driftMat, 40);
-    for (let i = 0; i < 40; i++) {
-      const x = -2200 + rng() * 4200;
-      const z = -1800 + rng() * 3400;
-      dummy.position.set(x, heightAt(x, z) + 0.8, z);
-      dummy.rotation.set(0, rng() * Math.PI, 0);
-      dummy.scale.set(0.6 + rng() * 1.4, 0.8 + rng() * 0.6, 0.7 + rng() * 0.8);
-      dummy.updateMatrix();
-      drifts.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(drifts);
-    // Foreground cluster for the cover corridor: the chase cameras look
-    // north over the eastern field (x 300..1300, z 700..1700) and the
-    // runway surroundings — without this the cover and landing foregrounds
-    // are one flat pale sheet. Boulders + spires + drifts, dense on purpose.
-    const clusterRocks = new THREE.InstancedMesh(rockGeo, rockMat, 18);
-    for (let i = 0; i < 18; i++) {
-      let x = 250 + rng() * 1100;
-      let z = 650 + rng() * 1050;
-      // Keep the lead channel clear — no boulders in the water.
-      if (Math.abs(x - riverCenterX(z)) < 70) x += 90;
-      dummy.position.set(x, heightAt(x, z) + 1.5, z);
-      dummy.rotation.set(rng() * Math.PI, rng() * Math.PI, rng() * Math.PI);
-      dummy.scale.set(1.2 + rng() * 2.2, 0.9 + rng() * 1.4, 1.2 + rng() * 2.2);
-      dummy.updateMatrix();
-      clusterRocks.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(clusterRocks);
-    const clusterSpireGeo = new THREE.ConeGeometry(5, 34, 6);
-    const clusterSpireMat = new THREE.MeshStandardMaterial({
-      color: 0xcfe0f2, roughness: 0.3, metalness: 0.05, flatShading: true,
+    const flagMat = new THREE.MeshBasicMaterial({ color: 0x39ff88, side: THREE.DoubleSide });
+    const spots = [];
+    const st = CONFIG.station;
+    for (let i = 0; i < 4; i++) spots.push([st.x - 70 + i * 46, st.z + 95, 'sock']);
+    const rw = CONFIG.runway;
+    spots.push([riverCenterX(rw.z - rw.length / 2) - 40, rw.z - rw.length / 2 - 20, 'flag']);
+    spots.push([riverCenterX(rw.z + rw.length / 2) + 40, rw.z + rw.length / 2 + 20, 'flag']);
+    CONFIG.camps.forEach((c) => spots.push([c.x + 18, c.z + 12, 'flag']));
+    spots.push([CONFIG.ship.x + 30, CONFIG.ship.z - 60, 'sock']);
+    spots.push([CONFIG.ship.x - 30, CONFIG.ship.z + 60, 'sock']);
+    spots.forEach(([x, z, kind]) => {
+      const y = groundHeight(x, z);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 9, 6), poleMat);
+      pole.position.set(x, y + 4.5, z);
+      scene.add(pole);
+      if (kind === 'sock') {
+        const sock = new THREE.Mesh(new THREE.ConeGeometry(0.9, 3.4, 8), sockMat);
+        sock.position.set(x + 1.2, y + 8.6, z);
+        sock.rotation.z = -Math.PI / 2.4;
+        scene.add(sock);
+      } else {
+        const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 1.5), flagMat);
+        flag.position.set(x + 1.3, y + 8.2, z);
+        scene.add(flag);
+      }
     });
-    const clusterSpires = new THREE.InstancedMesh(clusterSpireGeo, clusterSpireMat, 12);
-    for (let i = 0; i < 12; i++) {
-      let x = 300 + rng() * 1000;
-      let z = 700 + rng() * 1000;
-      if (Math.abs(x - riverCenterX(z)) < 70) x += 90;
-      dummy.position.set(x, heightAt(x, z) + 15, z);
-      dummy.rotation.set(0, rng() * Math.PI, (rng() - 0.5) * 0.2);
-      dummy.scale.set(0.8 + rng() * 1.2, 0.8 + rng() * 1.4, 0.8 + rng() * 1.2);
-      dummy.updateMatrix();
-      clusterSpires.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(clusterSpires);
-    const clusterDrifts = new THREE.InstancedMesh(driftGeo, driftMat, 24);
-    for (let i = 0; i < 24; i++) {
-      let x = -200 + rng() * 1400;
-      let z = 800 + rng() * 1100;
-      if (Math.abs(x - riverCenterX(z)) < 60) x += 80;
-      dummy.position.set(x, heightAt(x, z) + 0.8, z);
-      dummy.rotation.set(0, rng() * Math.PI, 0);
-      dummy.scale.set(0.8 + rng() * 1.6, 0.8 + rng() * 0.8, 0.8 + rng() * 1.0);
-      dummy.updateMatrix();
-      clusterDrifts.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(clusterDrifts);
-    // Second cluster: the lead's east bank (the bare right side of the
-    // river shot, z -200..-900) and the open snow west of the station
-    // (the bare left mid-distance of the approach shot).
-    const bankRocks = new THREE.InstancedMesh(rockGeo, rockMat, 8);
-    for (let i = 0; i < 8; i++) {
-      const x = 300 + rng() * 300;
-      const z = -900 + rng() * 700;
-      dummy.position.set(x, heightAt(x, z) + 1.5, z);
-      dummy.rotation.set(rng() * Math.PI, rng() * Math.PI, rng() * Math.PI);
-      dummy.scale.set(1.0 + rng() * 2.0, 0.8 + rng() * 1.2, 1.0 + rng() * 2.0);
-      dummy.updateMatrix();
-      bankRocks.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(bankRocks);
-    const bankDrifts = new THREE.InstancedMesh(driftGeo, driftMat, 10);
-    for (let i = 0; i < 10; i++) {
-      const x = 280 + rng() * 320;
-      const z = -900 + rng() * 700;
-      dummy.position.set(x, heightAt(x, z) + 0.8, z);
-      dummy.rotation.set(0, rng() * Math.PI, 0);
-      dummy.scale.set(0.8 + rng() * 1.4, 0.8 + rng() * 0.8, 0.8 + rng() * 1.0);
-      dummy.updateMatrix();
-      bankDrifts.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(bankDrifts);
-    const stationWestRocks = new THREE.InstancedMesh(rockGeo, rockMat, 6);
-    for (let i = 0; i < 6; i++) {
-      const x = -300 + rng() * 400;
-      const z = 1300 + rng() * 500;
-      dummy.position.set(x, heightAt(x, z) + 1.5, z);
-      dummy.rotation.set(rng() * Math.PI, rng() * Math.PI, rng() * Math.PI);
-      dummy.scale.set(1.0 + rng() * 2.0, 0.8 + rng() * 1.2, 1.0 + rng() * 2.0);
-      dummy.updateMatrix();
-      stationWestRocks.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(stationWestRocks);
-    const stationWestDrifts = new THREE.InstancedMesh(driftGeo, driftMat, 10);
-    for (let i = 0; i < 10; i++) {
-      const x = -300 + rng() * 400;
-      const z = 1300 + rng() * 500;
-      dummy.position.set(x, heightAt(x, z) + 0.8, z);
-      dummy.rotation.set(0, rng() * Math.PI, 0);
-      dummy.scale.set(0.8 + rng() * 1.4, 0.8 + rng() * 0.8, 0.8 + rng() * 1.0);
-      dummy.updateMatrix();
-      stationWestDrifts.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(stationWestDrifts);
   }
 
-  // The lead shimmers and the steam breathes — all by sim time, so the
-  // screenshots stay reproducible.
-  function updateSea(dt, clock) {
-    if (waterMat) waterMat.opacity = 0.90 + 0.04 * Math.sin(clock * 0.6);
-    steamMats.forEach((m, i) => {
-      m.opacity = 0.18 + 0.08 * Math.sin(clock * 0.4 + i * 1.7);
+  // Water glint breathes, mist drifts, beacon pulses — all pure functions
+  // of the game clock, so the render is identical on every run.
+  function updateSea(_dt, clock) {
+    if (glintMat) glintMat.opacity = 0.3 + 0.08 * Math.sin(clock * 0.5);
+    mistSprites.forEach((s, i) => {
+      s.position.x = s.userData.baseX + Math.sin(clock * 0.05 + i * 1.7) * 26;
     });
+    if (beaconGlow) beaconGlow.material.opacity = 0.6 + 0.3 * Math.sin(clock * 1.4);
   }
 
   return {
     buildTerrainMesh, buildRiver, buildRunway, buildVolcanoSmoke,
     buildVillages, buildTrees, buildSea, buildBoats, buildLighthouse,
-    buildPalms, updateSea, riverCenterX, heightAt,
+    buildPalms, updateSea, heightAt, riverCenterX,
   };
 })();

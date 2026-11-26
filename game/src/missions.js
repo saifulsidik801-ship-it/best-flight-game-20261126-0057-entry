@@ -1,132 +1,126 @@
-// Aurora Ring Run — sorties: what counts as progress, winning and losing.
-// One clear job: the three missions' rules, scoring and end states.
+// Aurora Ring Run v6 — sortie state machine. Three sortie types share one
+// flow: score for goals, a small trickle for flying fast, a time bonus on
+// a win, and a hard end on a wreck or an empty tank.
 
 const Missions = (function buildMissionsModule() {
   let mission = MISSIONS[0];
   let score = 0;
   let best = 0;
-  let done = 0;          // rings threaded / crates dropped / landings
-  let finished = false;  // sortie over (win or fail)
+  let done = 0;
+  let finished = false;
   let won = false;
-  let startTime = 0;
   let elapsed = 0;
   let lastEvent = null;
-  let lowFuelWarned = false;
+  let lastAirSpeed = 0; // speed just before the floats touched — the softness test
 
-  try { best = Number(localStorage.getItem('aurora-best') || 0); } catch (e) { best = 0; }
-
-  function select(index) {
-    mission = MISSIONS[index] || MISSIONS[0];
-    return mission;
-  }
+  function select(i) { mission = MISSIONS[i]; }
 
   function start() {
-    score = 0;
-    done = 0;
-    finished = false;
-    won = false;
-    elapsed = 0;
-    startTime = performance.now();
-    lowFuelWarned = false;
-    lastEvent = null;
     Physics.reset(mission);
     Rings.reset();
     Rings.resetMarkers();
     Rings.setGoalsVisible(mission.type);
     Sky.setDusk(!!mission.dusk);
     Aircraft.setLandingLight(!!mission.dusk);
-    return mission;
+    score = 0;
+    done = 0;
+    finished = false;
+    won = false;
+    elapsed = 0;
+    lastEvent = null;
+    lastAirSpeed = 0;
   }
 
-  function fmtTime(sec) {
-    sec = Math.max(0, sec);
-    const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
-    return m + ':' + String(s).padStart(2, '0');
+  function endSortie(w, reason) {
+    if (finished) return;
+    finished = true;
+    won = w;
+    if (w) score += Math.max(0, Math.floor(240 - elapsed)) * CONFIG.timeBonusPerSec;
+    score = Math.round(score);
+    if (score > best) best = score;
+    if (reason) lastEvent = { type: w ? 'won' : 'lost', text: reason };
   }
 
   function update(dt, stepInfo) {
     if (finished) return;
     elapsed += dt;
     const p = Physics.state;
-
-    // Low-fuel warning once.
-    if (p.fuel < 20 && !lowFuelWarned) {
-      lowFuelWarned = true;
-      lastEvent = { type: 'warn', text: 'LOW FUEL — HEAD FOR THE STRIP' };
-    }
+    if (!p.onGround) lastAirSpeed = p.speed;
 
     if (mission.type === 'rings') {
-      const hit = Rings.checkPass(p.pos);
-      if (hit >= 0) {
+      if (Rings.checkPass(p.pos)) {
         done++;
-        score += CONFIG.ringScore + Math.max(0, 60 - Math.floor(elapsed)) ;
-        AudioSys.ringChime();
-        lastEvent = { type: 'ring', text: 'RING ' + done + ' / ' + mission.target + ' — +' + CONFIG.ringScore };
-        if (done >= mission.target) endSortie(true, 'ALL 12 RINGS THREADED');
+        score += CONFIG.ringScore + Math.max(0, 60 - Math.floor(elapsed));
+        lastEvent = { type: 'ring', text: 'RING ' + done + ' / ' + mission.target };
+        if (done >= mission.target) {
+          endSortie(true, 'ALL ' + mission.target + ' RINGS — SORTIE CLEAR');
+          return;
+        }
       }
     } else if (mission.type === 'crates') {
       const alt = p.pos.y - Terrain.heightAt(p.pos.x, p.pos.z);
-      const hit = Rings.checkCrate(p.pos, alt);
-      if (hit >= 0) {
+      if (Rings.checkCrate(p.pos, alt)) {
         done++;
         score += CONFIG.crateScore;
-        AudioSys.crateThud();
-        lastEvent = { type: 'crate', text: 'SUPPLY DELIVERED ' + done + ' / ' + mission.target + ' — +' + CONFIG.crateScore };
-        if (done >= mission.target) endSortie(true, 'ALL SUPPLIES DELIVERED');
+        lastEvent = { type: 'crate', text: 'SUPPLY DROP ' + done + ' / ' + mission.target };
+        if (done >= mission.target) {
+          endSortie(true, 'ALL ' + mission.target + ' DROPS DELIVERED');
+          return;
+        }
       }
     } else if (mission.type === 'landing') {
-      if (stepInfo && stepInfo.event && stepInfo.event.type === 'landed') {
+      if (stepInfo.event && stepInfo.event.type === 'landed') {
         done = 1;
-        const soft = Math.abs(p.pitch) < 0.12 ? 150 : 0;
+        // Gentle touchdown pays: the slower the floats met the water, the
+        // bigger the bonus (touchdown is legal up to 48 m/s).
+        const soft = Math.max(0, Math.round((48 - lastAirSpeed) * 4));
         score += CONFIG.landingScore + soft;
-        AudioSys.thump();
-        endSortie(true, 'TOUCHDOWN — WELCOME HOME' + (soft ? ' · GREASED IT (+150)' : ''));
+        endSortie(true, 'LANDED ON THE LIT LANE — BEAVER DOWN SAFE');
+        return;
       }
     }
 
-    // Crash / destroy ends the sortie.
-    if (stepInfo && stepInfo.event) {
-      const ev = stepInfo.event;
-      if (ev.type === 'destroyed') {
-        endSortie(false, 'AIRFRAME LOST — THE ICE WINS THIS TIME');
-      } else if (ev.type === 'crash') {
-        AudioSys.thump();
-        lastEvent = { type: 'crash', text: 'TERRAIN STRIKE — AIRFRAME ' + Math.max(0, Math.round(p.hull)) + '%' };
+    if (stepInfo.event) {
+      if (stepInfo.event.type === 'destroyed') {
+        lastEvent = { type: 'destroyed', text: 'WRECKED — HULL GONE' };
+        endSortie(false);
+        return;
+      }
+      if (stepInfo.event.type === 'crash') {
+        lastEvent = {
+          type: 'crash',
+          text: 'TERRAIN STRIKE — HULL ' + Math.max(0, Math.round(p.hull)) + '%',
+        };
+        // A strike that did not destroy the plane does not end the sortie;
+        // the pilot flies on, damaged.
       }
     }
-    // Fuel out over rough ground ends it too.
-    if (p.fuel <= 0 && !p.onGround && !finished) {
-      endSortie(false, 'OUT OF FUEL — FORCED LANDING ON THE ICE');
-    }
-    // Time bonus ticks while flying clean.
-    if (!finished && p.speed > 30) score += dt * 1.5;
-  }
 
-  function endSortie(didWin, reason) {
-    finished = true;
-    won = didWin;
-    if (didWin) {
-      const bonus = Math.max(0, Math.floor(240 - elapsed)) * CONFIG.timeBonusPerSec;
-      score += bonus;
-      lastEvent = { type: 'win', text: reason + (bonus ? ' · TIME BONUS +' + bonus : '') };
-    } else {
-      lastEvent = { type: 'lose', text: reason };
+    if (p.fuel <= 0) {
+      lastEvent = { type: 'lost', text: 'OUT OF FUEL — GLIDE IT DOWN' };
+      endSortie(false);
+      return;
     }
-    score = Math.round(score);
-    if (score > best) {
-      best = score;
-      try { localStorage.setItem('aurora-best', String(best)); } catch (e) {}
-    }
+
+    // Flying fast pays a little, every second — this is the score that
+    // shows in the screenshots mid-sortie.
+    if (p.speed > 30) score += dt * 1.5;
   }
 
   function getState() {
     return {
-      mission, score, best, done, finished, won, elapsed,
-      lastEvent, target: mission.target,
+      mission, score: Math.round(score), best, done, finished, won,
+      elapsed, lastEvent, target: mission.target,
     };
   }
 
   function clearEvent() { lastEvent = null; }
+
+  function fmtTime(s) {
+    const m = Math.floor(s / 60);
+    const ss = Math.floor(s % 60);
+    return m + ':' + String(ss).padStart(2, '0');
+  }
 
   return { select, start, update, getState, clearEvent, fmtTime };
 })();

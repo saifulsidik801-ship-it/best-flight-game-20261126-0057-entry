@@ -35,7 +35,7 @@ const HUD = (function buildHudModule() {
     el('missionGoal').textContent = ms.mission.goal;
     const prog = ms.mission.type === 'rings' ? 'RINGS ' + ms.done + ' / ' + ms.target
       : ms.mission.type === 'crates' ? 'SUPPLIES ' + ms.done + ' / ' + ms.target
-      : ms.done ? 'LANDED' : 'LAND ON THE LIT STRIP';
+      : ms.done ? 'LANDED' : 'LAND ON THE LIT LANE';
     el('missionProg').textContent = prog + '  ·  TIME ' + Missions.fmtTime(ms.elapsed);
     el('fuelBar').style.width = Math.max(0, p.fuel) + '%';
     el('fuelBar').style.background = p.fuel < 20

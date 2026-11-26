@@ -1,124 +1,25 @@
-// Aurora Ring Run — polar night sky: gradient dome, stars, moon, aurora.
-// One clear job: make the sky the spectacle, so no shot ever has a flat patch.
-//
-// Shared helper: makeGlowSprite(color, scale) is a global used by terrain,
-// life, aircraft and rings too — it is defined here because the sky owns
-// light, and boot() runs after every script has parsed.
-
-// JS smoothstep (the dome shader has its own built-in — this one is for
-// the aurora ribbon vertex colours).
-function smoothstep(a, b, x) {
-  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-}
-
-let _glowTex = null;
-function makeGlowTexture() {
-  if (_glowTex) return _glowTex;
-  const c = document.createElement('canvas');
-  c.width = 64; c.height = 64;
-  const g = c.getContext('2d');
-  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grad.addColorStop(0, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
-  grad.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 64, 64);
-  _glowTex = new THREE.CanvasTexture(c);
-  return _glowTex;
-}
-
-function makeGlowSprite(color, scale) {
-  const mat = new THREE.SpriteMaterial({
-    map: makeGlowTexture(), color: color, transparent: true,
-    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
-  });
-  const s = new THREE.Sprite(mat);
-  s.scale.set(scale, scale, 1);
-  return s;
-}
+// Aurora Ring Run v6 — polar-night sky: gradient dome, stars, moon,
+// four aurora ribbons, and the light rig (moon + hemi + warm camera fill
+// + green aurora bounce). The aurora is STATIC (no sway) so every render
+// is deterministic.
 
 const Sky = (function buildSkyModule() {
-  let ribbons = [];
-  let ribbonMats = [];
   let rendererRef = null;
+  let ribbonMats = [];
   let duskMode = false;
 
-  // Curved ribbon: a plane bent into a long arc, vertex colours fading
-  // green -> teal -> violet along its length and to black at the lower edge
-  // (additive blending makes black transparent, so the ribbon has no edge).
-  function buildRibbon(seed, x, y, z, rotY, len, hgt) {
-    const geo = new THREE.PlaneGeometry(len, hgt, 48, 8);
-    const pos = geo.attributes.position;
-    const colors = new Float32Array(pos.count * 3);
-    const cGreen = new THREE.Color(0x39ff88);
-    const cTeal = new THREE.Color(0x2ad4c4);
-    const cViolet = new THREE.Color(0x7a4dff);
-    const tmp = new THREE.Color();
-    for (let i = 0; i < pos.count; i++) {
-      const px = pos.getX(i);
-      const py = pos.getY(i);
-      const u = (px / len) + 0.5;           // 0..1 along the ribbon
-      const v = (py / hgt) + 0.5;           // 0..1 bottom..top
-      // Bend the ribbon: a slow sine arc in height plus a bow in depth.
-      pos.setY(i, py + Math.sin(u * Math.PI) * 90 + Math.sin(u * Math.PI * 2.3 + seed) * 34);
-      pos.setZ(i, Math.sin(u * Math.PI * 1.6 + seed * 0.7) * 160);
-      // Colour: green -> teal -> violet along the length, fading to black
-      // at the bottom edge so the ribbon dissolves into the sky.
-      if (u < 0.5) tmp.lerpColors(cGreen, cTeal, u * 2);
-      else tmp.lerpColors(cTeal, cViolet, (u - 0.5) * 2);
-      const edge = 0.15 + 0.85 * Math.pow(v, 1.4);
-      // Ragged lower edge: the ribbon frays instead of ending in a line.
-      const fray = 0.55 + 0.45 * Math.sin(u * 31 + seed * 3.0);
-      // Curtain rays: brightness varies rapidly along the ribbon, so it
-      // reads as a rippling curtain of light, not a flat band.
-      const rays = 0.62 + 0.38 * Math.sin(u * 47 + seed * 1.3) * Math.sin(u * 13 + seed);
-      // Dissolve both ends so no ribbon ends in a hard vertical edge.
-      const endFade = smoothstep(0.0, 0.12, u) * (1 - smoothstep(0.88, 1.0, u));
-      const a = edge * fray * rays * endFade;
-      colors[i * 3] = tmp.r * a;
-      colors[i * 3 + 1] = tmp.g * a;
-      colors[i * 3 + 2] = tmp.b * a;
-    }
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geo.computeVertexNormals();
-    const mat = new THREE.MeshBasicMaterial({
-      vertexColors: true, transparent: true, opacity: 0.55,
-      blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-      depthWrite: false, fog: false,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, y, z);
-    mesh.rotation.y = rotY;
-    // Face the play area: ribbons hang in the northern sky, tilted so the
-    // pilot under them sees their full face, not their edge.
-    mesh.rotation.x = -0.18;
-    ribbonMats.push(mat);
-    return mesh;
-  }
-
-  function buildStars(scene) {
-    const rng = makeRng(4242);
-    const count = 900;
-    const pos = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      // Upper hemisphere of the dome, biased away from the horizon so the
-      // stars read over the aurora instead of behind the terrain.
-      const theta = rng() * Math.PI * 2;
-      const phi = Math.acos(1 - rng() * 0.82); // 0..~1.2 rad from zenith
-      const r = 6600;
-      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      pos[i * 3 + 1] = r * Math.cos(phi) + 150;
-      pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const mat = new THREE.PointsMaterial({
-      color: 0xdceaff, size: 2.2, sizeAttenuation: false,
-      transparent: true, opacity: 0.9, fog: false,
-    });
-    const stars = new THREE.Points(geo, mat);
-    scene.add(stars);
+  // Soft round glow texture, drawn once on a canvas (no external asset).
+  function glowTexture() {
+    const c = document.createElement('canvas');
+    c.width = 128; c.height = 128;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(c);
   }
 
   function buildSky(scene, renderer) {
@@ -127,108 +28,183 @@ const Sky = (function buildSkyModule() {
     renderer.toneMappingExposure = CONFIG.exposure;
     scene.fog = new THREE.Fog(CONFIG.fogColor, CONFIG.fogNear, CONFIG.fogFar);
 
-    // Night gradient dome: deep indigo overhead, blue mid-sky, a faint
-    // green band low on the horizon where the aurora lives.
-    const domeGeo = new THREE.SphereGeometry(7000, 32, 16);
+    // --- Gradient night dome (BackSide, no fog) ---
+    const domeGeo = new THREE.SphereGeometry(7000, 28, 18);
     const domeMat = new THREE.ShaderMaterial({
-      side: THREE.BackSide, fog: false, depthWrite: false,
+      side: THREE.BackSide,
+      fog: false,
+      depthWrite: false,
       uniforms: {
         top: { value: new THREE.Color(CONFIG.skyTop) },
         mid: { value: new THREE.Color(CONFIG.skyMid) },
         low: { value: new THREE.Color(CONFIG.skyLow) },
         green: { value: new THREE.Color(0x0f4a3a) },
       },
-      vertexShader: 'varying vec3 vPos; void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      vertexShader: [
+        'varying vec3 vDir;',
+        'void main() {',
+        '  vDir = normalize(position);',
+        '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+        '}',
+      ].join('\n'),
       fragmentShader: [
-        'varying vec3 vPos;',
+        'varying vec3 vDir;',
         'uniform vec3 top; uniform vec3 mid; uniform vec3 low; uniform vec3 green;',
         'void main() {',
-        '  float h = normalize(vPos).y;',
-        '  vec3 col = h > 0.22 ? mix(mid, top, smoothstep(0.22, 0.85, h)) : mix(low, mid, smoothstep(-0.05, 0.22, h));',
-        '  col = mix(col, green, smoothstep(0.22, 0.02, h) * 0.35);',
+        '  float h = clamp(vDir.y, -0.08, 1.0);',
+        '  vec3 col = mix(low, mid, smoothstep(0.0, 0.28, h));',
+        '  col = mix(col, top, smoothstep(0.28, 0.75, h));',
+        '  float north = smoothstep(0.0, -0.6, vDir.z);',
+        '  col = mix(col, green, north * smoothstep(0.22, 0.0, h) * 0.55);',
         '  gl_FragColor = vec4(col, 1.0);',
         '}',
       ].join('\n'),
     });
-    const dome = new THREE.Mesh(domeGeo, domeMat);
-    scene.add(dome);
+    scene.add(new THREE.Mesh(domeGeo, domeMat));
 
-    buildStars(scene);
+    // --- Stars: 700 spread over the upper dome + 300 extra in the
+    // north-west sky, so no shot has a bare black corner up-left. ---
+    const rng = makeRng(7);
+    function starCloud(count, region) {
+      const pos = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        const a = region === 'nw'
+          ? Math.PI + rng() * Math.PI * 0.5
+          : rng() * Math.PI * 2;
+        const e = region === 'nw' ? 0.35 + rng() * 0.55 : 0.12 + rng() * 0.8;
+        const r = 6400;
+        pos[i * 3] = Math.cos(a) * Math.cos(e) * r;
+        pos[i * 3 + 1] = Math.sin(e) * r;
+        pos[i * 3 + 2] = Math.sin(a) * Math.cos(e) * r;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const mat = new THREE.PointsMaterial({
+        color: 0xdfeaff, size: region === 'nw' ? 2.6 : 2.0,
+        sizeAttenuation: false, transparent: true, opacity: 0.9, fog: false,
+      });
+      scene.add(new THREE.Points(geo, mat));
+    }
+    starCloud(700, 'all');
+    starCloud(300, 'nw');
 
-    // Moon: a bright disc + a wide halo, high in the north-west, and the
-    // directional light comes from exactly that direction.
-    const moonDir = new THREE.Vector3(-0.42, 0.55, -0.72).normalize();
-    const moonPos = moonDir.clone().multiplyScalar(6200);
+    // --- Moon: bright disc + halo, north-west so it fills the top-left
+    // of the north-looking shots. The moonlight comes from this direction.
+    const moonPos = new THREE.Vector3(-1800, 1500, -3400);
     const moon = new THREE.Mesh(
-      new THREE.CircleGeometry(110, 32),
+      new THREE.CircleGeometry(60, 32),
       new THREE.MeshBasicMaterial({ color: 0xf4f0dc, fog: false }),
     );
     moon.position.copy(moonPos);
     moon.lookAt(0, 0, 0);
     scene.add(moon);
-    const halo = makeGlowSprite(0xcfd8ff, 620);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture(), color: 0xcfd8ff, transparent: true,
+      opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+    }));
     halo.position.copy(moonPos);
+    halo.scale.set(460, 460, 1);
     scene.add(halo);
 
-    // Aurora ribbons — four of them, TALL curtains (260-320 m) hung high
-    // in the northern sky so the top half of every frame has structure.
-    // They stay near-facing (small rotY) so the pilot sees their full
-    // face, not their edge. All static: determinism beats a sway nobody
-    // would notice at screenshot scale.
-    const ribbonDefs = [
-      { seed: 11, x: -900, y: 820, z: -2300, rotY: 0.2, len: 1500, hgt: 300 },
-      { seed: 23, x: 350, y: 900, z: -2600, rotY: -0.12, len: 1700, hgt: 320 },
-      { seed: 37, x: -1900, y: 760, z: -1800, rotY: 0.3, len: 1300, hgt: 260 },
-      { seed: 51, x: 1400, y: 800, z: -2100, rotY: -0.25, len: 1400, hgt: 280 },
-    ];
-    ribbons = ribbonDefs.map((d) => {
-      const r = buildRibbon(d.seed, d.x, d.y, d.z, d.rotY, d.len, d.hgt);
-      scene.add(r);
-      return r;
-    });
-
-    // Lights — no PointLights, no 2048 shadows. The moon casts (1024, as
-    // v4); everything else is shadowless fill.
+    // --- Light rig (no new PointLights, no 2048 shadows) ---
     const moonLight = new THREE.DirectionalLight(CONFIG.moonColor, CONFIG.moonIntensity);
-    moonLight.position.copy(moonDir).multiplyScalar(3000);
+    moonLight.position.copy(moonPos).normalize().multiplyScalar(3500);
     moonLight.castShadow = true;
     moonLight.shadow.mapSize.set(1024, 1024);
-    moonLight.shadow.camera.left = -1800;
-    moonLight.shadow.camera.right = 1800;
-    moonLight.shadow.camera.top = 1800;
-    moonLight.shadow.camera.bottom = -1800;
+    moonLight.shadow.camera.left = -1400;
+    moonLight.shadow.camera.right = 1400;
+    moonLight.shadow.camera.top = 1400;
+    moonLight.shadow.camera.bottom = -1400;
     moonLight.shadow.camera.near = 500;
-    moonLight.shadow.camera.far = 7000;
+    moonLight.shadow.camera.far = 8000;
+    moonLight.shadow.bias = -0.0005;
     scene.add(moonLight);
     scene.add(moonLight.target);
 
-    const hemiLight = new THREE.HemisphereLight(CONFIG.hemiSky, CONFIG.hemiGround, 0.85);
-    scene.add(hemiLight);
+    scene.add(new THREE.HemisphereLight(CONFIG.hemiSky, CONFIG.hemiGround, 0.85));
 
-    // Warm camera-side fill: the v4 lesson — without it the plane's camera
-    // side crushes to a black silhouette at night.
+    // Warm fill from the south (camera side for north-looking shots):
+    // this is what keeps the Beaver's cream tail readable from behind.
     const fill = new THREE.DirectionalLight(CONFIG.fillColor, CONFIG.fillIntensity);
-    fill.position.set(1800, 1200, 2200);
+    fill.position.set(1500, 1200, 2500);
     scene.add(fill);
+    scene.add(fill.target);
 
-    // Green bounce from the aurora side: tints the snow and the plane's
-    // upper surfaces so the night reads aurora-lit, not just moonlit.
+    // Green bounce from the aurora side (north, high).
     const bounce = new THREE.DirectionalLight(CONFIG.bounceColor, CONFIG.bounceIntensity);
-    bounce.position.set(-1500, 1800, -2000);
+    bounce.position.set(0, 900, -2500);
     scene.add(bounce);
+    scene.add(bounce.target);
+
+    // --- Aurora ribbons: four wide curved curtains across the northern
+    // sky, overlapping so they span the full frame width from any
+    // north-looking shot. Real geometry, vertex-colour gradient
+    // green -> teal -> violet, fading to black at the lower edge
+    // (additive blending makes black transparent). ---
+    // The ribbons are the sky's CEILING: the nearest one is high (y 1150,
+    // h 500) and close (z -600) so its top reaches ~29° above the horizon
+    // and fills the TOP of every north-looking frame. The v6 ribbons sat
+    // at y 540-860 — their tops only reached ~10°, a low band that left
+    // the top third of every shot flat black. The far ribbons stack below.
+    const ribbonDefs = [
+      { x: 0, y: 1150, z: -600, w: 6000, h: 500, seed: 11, opacity: 0.55 },
+      { x: -1400, y: 950, z: -1400, w: 6000, h: 450, seed: 23, opacity: 0.5 },
+      { x: 1400, y: 800, z: -2200, w: 6000, h: 400, seed: 37, opacity: 0.55 },
+      { x: 0, y: 900, z: -3000, w: 6000, h: 450, seed: 51, opacity: 0.38 },
+    ];
+    const green = new THREE.Color(CONFIG.auroraGreen);
+    const teal = new THREE.Color(CONFIG.auroraTeal);
+    const violet = new THREE.Color(CONFIG.auroraViolet);
+    const black = new THREE.Color(0x000000);
+    ribbonDefs.forEach((def) => {
+      const geo = new THREE.PlaneGeometry(def.w, def.h, 64, 8);
+      const posAttr = geo.attributes.position;
+      const colors = new Float32Array(posAttr.count * 3);
+      const r = makeRng(def.seed);
+      const p1 = r() * 6.28, p2 = r() * 6.28, p3 = r() * 6.28;
+      for (let i = 0; i < posAttr.count; i++) {
+        const x = posAttr.getX(i);
+        const y = posAttr.getY(i);
+        const u = (x / def.w) + 0.5;          // 0..1 along the ribbon
+        const v = (y / def.h) + 0.5;          // 0..1 bottom..top
+        // Curtain curves: a slow sine arc plus a ripple, different per ribbon.
+        posAttr.setY(i, y + Math.sin(u * 5.2 + p1) * 55 + Math.sin(u * 11.0 + p2) * 18);
+        posAttr.setZ(i, Math.sin(u * 3.1 + p3) * 130);
+        // Colour along the length: green -> teal -> violet.
+        const c = new THREE.Color();
+        if (u < 0.5) c.lerpColors(green, teal, u * 2);
+        else c.lerpColors(teal, violet, (u - 0.5) * 2);
+        // Fade to black at the lower edge (and a little at the top).
+        const edge = Math.min(1, v / 0.45) * (0.75 + 0.25 * Math.min(1, (1 - v) / 0.25));
+        c.lerp(black, 1 - edge);
+        colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+      }
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geo.computeVertexNormals();
+      const mat = new THREE.MeshBasicMaterial({
+        vertexColors: true, transparent: true, opacity: def.opacity,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+        depthWrite: false, fog: false,
+      });
+      ribbonMats.push(mat);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(def.x, def.y, def.z);
+      mesh.rotation.x = -0.12; // top leans north, like a curtain
+      scene.add(mesh);
+    });
   }
 
-  // Landing-approach mode (mission 3, dusk flag): dim the aurora a touch
-  // so the runway lights own the frame, lift the exposure a notch.
+  // Landing-approach mode (mission 3, dusk flag): lift the exposure a touch
+  // and dim the aurora slightly so the lane lights read harder.
   function setDusk(on) {
     duskMode = !!on;
     if (rendererRef) rendererRef.toneMappingExposure = duskMode ? 1.45 : CONFIG.exposure;
     ribbonMats.forEach((m) => { m.opacity = duskMode ? 0.42 : 0.55; });
   }
 
-  // The night is static by design — ribbons, stars and moon do not move,
-  // so every screenshot is reproducible. Kept because main.js calls it.
-  function update(dt, clock) {}
+  // The sky is static (ribbons, stars, moon do not move) — determinism
+  // first. The function exists because main.js calls Sky.update every tick.
+  function update(_dt, _clock) { /* static sky */ }
 
   return { buildSky, update, setDusk };
 })();
