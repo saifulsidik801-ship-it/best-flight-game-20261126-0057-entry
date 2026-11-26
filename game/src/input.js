@@ -25,9 +25,10 @@ const Input = (function buildInputModule() {
 
   function isDown(code) { return !!keys[code]; }
 
-  // Continuous control axes, -1..1.
+  // Arcade convention: ArrowUp = climb (nose up), ArrowDown = dive.
+  // (Was inverted: Up dived. Fixed after playtest — casual players push Up to climb.)
   function controls() {
-    const pitch = (isDown('ArrowDown') ? 1 : 0) - (isDown('ArrowUp') ? 1 : 0);
+    const pitch = (isDown('ArrowUp') ? 1 : 0) - (isDown('ArrowDown') ? 1 : 0);
     let roll = (isDown('ArrowRight') ? 1 : 0) - (isDown('ArrowLeft') ? 1 : 0);
     // Mouse steers gently when moved — desktop mouse play, as the brief asks.
     if (mouseActive && Math.abs(mouseX) > 0.08) roll += mouseX * 0.45;

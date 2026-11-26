@@ -15,6 +15,9 @@ const Physics = (function buildPhysicsModule() {
     onGround: false,
     crashed: false,
     landed: false,
+    touchdown: false, // rolling out from a proper strip touchdown — stays a landing even if wind pushes the rollout a few metres off the centreline
+    struck: false,   // took a terrain strike this sortie — a damaged rollout is not a landing
+    invuln: 0,       // seconds of grace after a terrain strike — one mistake, one hit
     windDir: 0.9,      // radians the wind blows FROM
     windSpeed: 5,      // m/s base
     gust: 0,
@@ -34,6 +37,9 @@ const Physics = (function buildPhysicsModule() {
     state.onGround = false;
     state.crashed = false;
     state.landed = false;
+    state.touchdown = false;
+    state.struck = false;
+    state.invuln = 0;
     state.time = 0;
     state.gust = 0;
     // Fresh wind each sortie: direction from the north-west, 4–9 m/s.
@@ -42,11 +48,14 @@ const Physics = (function buildPhysicsModule() {
     state.windSpeed = 4 + rng() * 5;
   }
 
-  function windAt(t) {
+  function windAt(t, y) {
     // Slow gusts: a 7-second swell plus a faster ripple.
     const g = Math.sin(t * 0.9) * 0.6 + Math.sin(t * 2.7 + 1.7) * 0.4;
     state.gust = g;
-    const speed = Math.max(0, state.windSpeed + g * 3.5);
+    // Wind gradient: the breeze is much weaker near the ground than aloft,
+    // so a final approach does not get blown off the strip.
+    const altFactor = 0.35 + 0.65 * Math.min(1, Math.max(0, y) / 300);
+    const speed = Math.max(0, state.windSpeed + g * 3.5) * altFactor;
     return {
       x: Math.sin(state.windDir) * speed,
       z: Math.cos(state.windDir) * speed,
@@ -67,7 +76,8 @@ const Physics = (function buildPhysicsModule() {
   function step(dt, ctrl) {
     if (state.crashed || state.landed) return { event: null };
     state.time += dt;
-    const wind = windAt(state.time);
+    if (state.invuln > 0) state.invuln -= dt;
+    const wind = windAt(state.time, state.pos.y);
 
     // --- Throttle and speed ---
     state.throttle = Math.max(0, Math.min(1, state.throttle + Input.throttleDelta(dt)));
@@ -97,8 +107,9 @@ const Physics = (function buildPhysicsModule() {
     // --- Position ---
     const fwd = forward();
     const lift = Math.max(0, state.speed * CONFIG.liftFactor);
-    // Level flight balances at cruise speed: slow flight sinks, fast flight climbs.
-    const vy = Math.sin(state.pitch) * state.speed + (lift - 3.41) * 4.0;
+    // Level flight balances near 47 m/s (throttle ~0.75): slower flight sinks
+    // gently, faster flight climbs — throttle discipline holds altitude.
+    const vy = Math.sin(state.pitch) * state.speed + (lift - 2.6) * 4.0;
     state.vel.set(
       fwd.x * state.speed + wind.x,
       vy,
@@ -124,28 +135,47 @@ const Physics = (function buildPhysicsModule() {
     const rw = CONFIG.runway;
     const onStrip = Math.abs(state.pos.x - rw.x) < rw.width / 2 + 4 &&
                     Math.abs(state.pos.z - rw.z) < rw.length / 2;
+    // A crash is a FIRST contact with the ground: once the plane is rolling
+    // on the ground it cannot crash again — it rolls out instead.
+    const wasAirborne = !state.onGround;
     if (clearance <= 2.5) {
       if (onStrip && Math.abs(state.pitch) < 0.22 && Math.abs(state.roll) < 0.3 &&
-          state.speed < 48 && state.speed > 12) {
-        // Touchdown: gentle enough to count as a landing.
+          state.speed < 48 && state.speed > 4) {
+        // Touchdown: gentle enough to count as a landing. The band starts at
+        // 4 m/s — a slow, gentle touchdown (6–12 m/s) is a landing, not a
+        // crash; the old >12 floor sent those straight to TERRAIN STRIKE.
         state.onGround = true;
+        state.touchdown = true;
         state.pos.y = ground + 2.5;
         state.speed = Math.max(0, state.speed - 26 * dt);
         if (state.speed < 6) { state.landed = true; event = { type: 'landed' }; }
-      } else if (state.speed > 4) {
+      } else if (state.speed > 4 && wasAirborne && state.invuln <= 0) {
         // Terrain strike.
         state.hull -= CONFIG.terrainHitDamage;
+        state.struck = true;
+        state.invuln = 1.5;
         state.pos.y = ground + 2.5;
         state.speed *= 0.35;
         event = { type: 'crash', hull: state.hull };
         if (state.hull <= 0) { state.crashed = true; event.type = 'destroyed'; }
         else { state.pitch = 0.25; }
       } else {
+        // Rolling out on the ground: no extra damage, just friction.
         state.onGround = true;
         state.pos.y = ground + 2.5;
+        state.speed = Math.max(0, state.speed - 10 * dt * (state.throttle < 0.7 ? 1 : 0.2));
+        // A first contact too slow for the touchdown band (deep-stall sink
+        // onto the strip) still counts as a landing if nothing was struck.
+        // So does a proper strip touchdown that rolled a few metres off the
+        // centreline on the wind before slowing below 6 m/s.
+        if (state.speed < 6 && !state.struck && !state.landed &&
+            (onStrip || state.touchdown)) {
+          state.landed = true; event = { type: 'landed' };
+        }
       }
     } else {
       state.onGround = false;
+      state.touchdown = false; // airborne again — a later touchdown must earn its own credit
     }
 
     // --- Bounds: turn back at the map edge ---

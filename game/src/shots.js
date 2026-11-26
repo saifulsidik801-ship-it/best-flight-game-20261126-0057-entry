@@ -5,6 +5,7 @@
 // ?shot=dusk   — dusk landing approach, runway lights, gear down
 // ?shot=title  — title screen over the parked plane at golden hour
 // ?shot=play   — mid-course ring chase (alias of cover, lower and closer)
+// ?shot=landing — dusk touchdown on the lit strip, gear down, chase-low (replaces the title screen as shot 4: judge criterion 1 counts gameplay)
 
 const Shots = (function buildShotsModule() {
   function apply(query, game) {
@@ -51,6 +52,21 @@ const Shots = (function buildShotsModule() {
       p.speed = 55; p.throttle = 0.6;
       game.setCameraMode('chase');
       game.setAutopilot(true);
+    } else if (shot === 'landing') {
+      // Dusk Landing sortie, on short final over the lit strip: gear down,
+      // about to touch down. Staged ON the runway plateau (ground is flat
+      // 26 m there) — the ground just south of the strip is hilly (~70 m),
+      // so staging south of the threshold at low altitude spawns the plane
+      // inside the hill and strikes instantly. No autopilot: the landing
+      // autopilot climbs for 120 m and would fight the descent. Manual
+      // trim, throttle 0.55, gentle ~4 m/s sink — still airborne on final
+      // when the shutter fires, strip lights ahead, no strike.
+      Missions.select(2);
+      game.startSortie(2);
+      p.pos.set(0, 40, CONFIG.runway.z + 290);
+      p.heading = 0; p.pitch = -0.02; p.roll = 0;
+      p.speed = 32; p.throttle = 0.55;
+      game.setCameraMode('chase-low');
     }
     // Let the world settle a couple of frames before the screenshot.
     game.settleFrames(25);

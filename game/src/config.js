@@ -4,7 +4,7 @@
 const CONFIG = {
   // World scale: 1 unit = 1 metre, valley is 5200 x 5200 m.
   worldSize: 5200,
-  terrainSegments: 180,
+  terrainSegments: 140, // 140x140 keeps the valley's shape at ~40% fewer tris than 180 — Swiftshader win, same heights (heightAt is unchanged)
   // Flight model (SI-ish, tuned for feel).
   maxThrottle: 1.0,
   throttleRate: 0.45,

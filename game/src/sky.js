@@ -52,7 +52,7 @@ const Sky = (function buildSkyModule() {
     sunLight = new THREE.DirectionalLight(CONFIG.sunColor, CONFIG.sunIntensity);
     sunLight.position.set(-2200, 1100, -3100);
     sunLight.castShadow = true;
-    sunLight.shadow.mapSize.set(2048, 2048);
+    sunLight.shadow.mapSize.set(1024, 1024); // 1024, not 2048: the shadow pass is the biggest Swiftshader cost; 1024 still reads crisp at this scale
     sunLight.shadow.camera.left = -1600; sunLight.shadow.camera.right = 1600;
     sunLight.shadow.camera.top = 1600; sunLight.shadow.camera.bottom = -1600;
     sunLight.shadow.camera.far = 9000;
@@ -74,9 +74,11 @@ const Sky = (function buildSkyModule() {
   function buildClouds(scene) {
     // Puffs of flattened spheres, warm-lit underneath, drifting slowly.
     const rng = makeRng(5150);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0xffe8d8, transparent: true, opacity: 0.82, roughness: 1,
-      emissive: 0xff9a50, emissiveIntensity: 0.28,
+    // Unlit clouds: MeshBasicMaterial skips the per-light fragment cost of
+    // MeshStandardMaterial (16 point lights made every cloud puff expensive).
+    // The warm colour + opacity carry the golden-hour look on their own.
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffe8d8, transparent: true, opacity: 0.82,
     });
     for (let i = 0; i < 26; i++) {
       const cloud = new THREE.Group();

@@ -37,10 +37,9 @@ const Rings = (function buildRingsModule() {
       ring.userData.index = i;
       ring.userData.baseY = p.y;
       ringGroup.add(ring);
-      // A small beacon light under each ring for dusk visibility.
-      const beacon = new THREE.PointLight(0xffa040, 1.1, 120);
-      beacon.position.copy(ring.position);
-      ringGroup.add(beacon);
+      // No PointLight per ring: 12 beacons made every standard-material
+      // fragment evaluate 12 extra lights. The rings glow via emissive
+      // already, and the strip + volcano lights carry the dusk look.
       return ring;
     });
     scene.add(ringGroup);
@@ -66,7 +65,7 @@ const Rings = (function buildRingsModule() {
     if (nextRing >= rings.length) return -1;
     const r = rings[nextRing];
     const d = pos.distanceTo(r.position);
-    if (d < 15) {
+    if (d < 16) {
       r.visible = false;
       const hit = nextRing;
       nextRing++;

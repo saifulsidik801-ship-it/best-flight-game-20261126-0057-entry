@@ -17,7 +17,7 @@ const Game = (function buildMainModule() {
   function boot() {
     const app = document.getElementById('app');
     renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); // cap 1.5: dpr 2 quadruples fragment work on hi-dpi screens for no visible gain at this art style
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -63,17 +63,29 @@ const Game = (function buildMainModule() {
     let last = performance.now();
     function frame(now) {
       requestAnimationFrame(frame);
-      // Clamp dt to [0, 0.05]: a headless first frame can carry a timestamp
-      // older than boot, and a negative dt makes the whole model diverge.
-      const rawDt = (now - last) / 1000;
+      const rawDt = Math.max(0, (now - last) / 1000);
       last = now;
-      const dt = Math.max(0, Math.min(0.05, rawDt));
-      if (!paused) tick(dt, Math.max(0, rawDt));
-      renderer.render(scene, camera);
-      if (settle > 0) {
-        settle--;
-        if (settle === 0) window.__shotSettled = true;
+      // Fixed-step simulation: on a slow renderer one wall second can be a
+      // single frame, and clamping dt to 0.05 made the game run at 1/20 speed.
+      // Instead, advance up to 1.0 s of game time per rendered frame in
+      // 0.05 s slices, so physics stays stable AND the game keeps real-time
+      // pace even at ~1 FPS. At 60 fps this is exactly one ~0.0167 s step —
+      // behaviour unchanged. (Physics is cheap vs the render; 20 slices/frame
+      // cost milliseconds, while the render costs ~a second.)
+      if (!paused) {
+        const simDt = Math.min(rawDt, 1.0);
+        const steps = Math.max(1, Math.ceil(simDt / 0.05));
+        const h = simDt / steps;
+        for (let i = 0; i < steps; i++) tick(h, h);
+        // Screenshot settle counts down in GAME seconds, not rendered frames:
+        // with substepping, 25 rendered frames can be 25 s of game time, and
+        // the staged plane would fly far from its setup before the shot.
+        if (settle > 0) {
+          settle -= simDt;
+          if (settle <= 0) { settle = 0; window.__shotSettled = true; }
+        }
       }
+      renderer.render(scene, camera);
     }
     requestAnimationFrame(frame);
     window.__gameReady = true;
@@ -222,7 +234,10 @@ const Game = (function buildMainModule() {
     startSortie,
     setCameraMode(m) { cameraMode = m; },
     setAutopilot(on) { autopilot = on; },
-    settleFrames(n) { settle = n; window.__shotSettled = false; },
+    // n counts "frames" at the old 0.05 s simulation step: 25 frames ≈ 1.25 s
+    // of game time, on any hardware. (Settle is game-time based so the staged
+    // plane does not fly away from its setup on a slow renderer.)
+    settleFrames(n) { settle = n * 0.05; window.__shotSettled = false; },
   };
 
   return api;

@@ -210,7 +210,9 @@ const Terrain = (function buildTerrainModule() {
     scene.add(emberLight);
     // A slow plume of soft grey puffs above the crater.
     const group = new THREE.Group();
-    const mat = new THREE.MeshStandardMaterial({ color: 0x9a9aa2, transparent: true, opacity: 0.3, roughness: 1 });
+    // Smoke puffs are unlit (MeshBasicMaterial): transparent standard-material
+    // spheres cost a full lighting evaluation per fragment for no visible gain.
+    const mat = new THREE.MeshBasicMaterial({ color: 0x9a9aa2, transparent: true, opacity: 0.3 });
     const rng = makeRng(77);
     for (let i = 0; i < 10; i++) {
       const r = 20 + rng() * 30;
@@ -302,7 +304,9 @@ const Terrain = (function buildTerrainModule() {
       placed++;
     }
     trunks.count = placed; cones.count = placed;
-    trunks.castShadow = true; cones.castShadow = true;
+    // Only the cones cast shadows — trunk shadows hide under the canopy and
+    // cost a second instanced draw in the shadow pass for nothing visible.
+    trunks.castShadow = false; cones.castShadow = true;
     scene.add(trunks); scene.add(cones);
     return { trunks, cones };
   }
