@@ -1,215 +1,147 @@
-// Merapi Ring Run — flight model: lift, stall, wind, terrain and landing.
-// One clear job: move the plane like a plane, and say what happened when it stops.
+// Ashwing — flight physics. One job: how the airtanker flies.
+// Arcade model: throttle sets speed, banking turns, pitch climbs and
+// dives, the ground is a soft floor. Scooping happens low over the
+// lake; dropping happens on SPACE. Exposes window.Physics with the
+// state the playtest harness reads.
+(function (global) {
+  'use strict';
+  var R = global.AshRng;
+  var T = global.AshTerrain;
 
-const Physics = (function buildPhysicsModule() {
-  const state = {
-    pos: new THREE.Vector3(0, 260, 1750),
-    vel: new THREE.Vector3(0, 0, 0),
-    heading: 0,        // radians, 0 = north (-Z), grows clockwise
-    pitch: 0,          // radians, + = nose up
-    roll: 0,           // radians, + = right wing down
-    throttle: 0.6,
-    speed: 55,
-    fuel: CONFIG.startFuel,
-    hull: 100,
-    onGround: false,
-    crashed: false,
-    landed: false,
-    touchdown: false, // rolling out from a proper strip touchdown — stays a landing even if wind pushes the rollout a few metres off the centreline
-    struck: false,   // took a terrain strike this sortie — a damaged rollout is not a landing
-    invuln: 0,       // seconds of grace after a terrain strike — one mistake, one hit
-    windDir: 0.9,      // radians the wind blows FROM
-    windSpeed: 5,      // m/s base
-    gust: 0,
-    time: 0,
+  function Physics(fireField) {
+    this.fires = fireField;
+    this.pos = new THREE.Vector3(-520, 26, -560);
+    this.heading = Math.PI * 0.5; // flying east, along the lake
+    this.speed = 34;
+    this.throttle = 0.55;
+    this.roll = 0;
+    this.pitch = 0;
+    this.fuel = 100;
+    this.water = 0;
+    this.scooping = false;
+    this.dropping = false;
+    this.dropTimer = 0;
+    this.keys = {};
+    this.auto = null; // autopilot target {x, z, alt} or null
+  }
+
+  Physics.prototype.reset = function (x, z, y, heading, water) {
+    this.pos.set(x, y, z);
+    this.heading = heading;
+    this.speed = 34;
+    this.throttle = 0.55;
+    this.roll = 0; this.pitch = 0;
+    this.fuel = 100;
+    this.water = water;
+    this.scooping = false; this.dropping = false;
+    this.auto = null;
   };
 
-  function reset(mission) {
-    const s = mission.start;
-    state.pos.set(s.x, s.y, s.z);
-    state.heading = s.heading;
-    state.pitch = 0;
-    state.roll = 0;
-    state.throttle = 0.55;
-    state.speed = s.speed;
-    state.fuel = CONFIG.startFuel;
-    state.hull = 100;
-    state.onGround = false;
-    state.crashed = false;
-    state.landed = false;
-    state.touchdown = false;
-    state.struck = false;
-    state.invuln = 0;
-    state.time = 0;
-    state.gust = 0;
-    // Fresh wind each sortie: direction from the north-west, 4–9 m/s.
-    const rng = makeRng(Date.now() % 100000);
-    state.windDir = 0.6 + rng() * 0.7;
-    state.windSpeed = 4 + rng() * 5;
-  }
+  Physics.prototype.groundBelow = function () {
+    return T.isOverLake(this.pos.x, this.pos.z) ? T.WATER_Y : T.heightAt(this.pos.x, this.pos.z);
+  };
 
-  function windAt(t, y) {
-    // Slow gusts: a 7-second swell plus a faster ripple.
-    const g = Math.sin(t * 0.9) * 0.6 + Math.sin(t * 2.7 + 1.7) * 0.4;
-    state.gust = g;
-    // Wind gradient: the breeze is much weaker near the ground than aloft,
-    // so a final approach does not get blown off the strip.
-    const altFactor = 0.35 + 0.65 * Math.min(1, Math.max(0, y) / 300);
-    const speed = Math.max(0, state.windSpeed + g * 3.5) * altFactor;
-    return {
-      x: Math.sin(state.windDir) * speed,
-      z: Math.cos(state.windDir) * speed,
-      speed,
-    };
-  }
+  Physics.prototype.step = function (dt) {
+    var k = this.keys;
+    // --- input ---
+    var throttleIn = 0;
+    if (k['KeyW']) throttleIn += 1;
+    if (k['KeyS']) throttleIn -= 1;
+    var rollIn = 0;
+    if (k['ArrowLeft']) rollIn -= 1;
+    if (k['ArrowRight']) rollIn += 1;
+    var pitchIn = 0;
+    if (k['ArrowUp']) pitchIn -= 1;
+    if (k['ArrowDown']) pitchIn += 1;
 
-  // Forward unit vector from heading/pitch/roll (roll does not change direction).
-  function forward() {
-    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
-    return new THREE.Vector3(
-      Math.sin(state.heading) * cp,
-      sp,
-      -Math.cos(state.heading) * cp,
-    );
-  }
-
-  function step(dt, ctrl) {
-    if (state.crashed || state.landed) return { event: null };
-    state.time += dt;
-    if (state.invuln > 0) state.invuln -= dt;
-    const wind = windAt(state.time, state.pos.y);
-
-    // --- Throttle and speed ---
-    state.throttle = Math.max(0, Math.min(1, state.throttle + Input.throttleDelta(dt)));
-    const target = state.throttle * CONFIG.cruiseSpeed;
-    const drag = CONFIG.dragBase + (ctrl.brake ? CONFIG.airbrakeDrag : 0);
-    // Lift bleeds speed in a climb, adds it in a dive — throttle discipline matters.
-    const climbFactor = 1 - Math.sin(state.pitch) * 0.55;
-    state.speed += (target * climbFactor - state.speed) * Math.min(1, (0.35 + drag * 8) * dt);
-    state.speed = Math.max(0, Math.min(CONFIG.maxSpeed, state.speed));
-
-    // --- Attitude ---
-    const rollTarget = ctrl.roll * 0.95;
-    state.roll += (rollTarget - state.roll) * Math.min(1, 3.2 * dt);
-    const pitchTarget = ctrl.pitch * 0.42;
-    state.pitch += (pitchTarget - state.pitch) * Math.min(1, 2.6 * dt);
-    // Banked turn: heading follows roll, tighter when fast.
-    // Positive roll = right wing down = right turn = heading grows.
-    const turnRate = Math.sin(state.roll) * CONFIG.rollRate * (0.5 + state.speed / 120);
-    state.heading += turnRate * dt + ctrl.yaw * CONFIG.yawRate * dt;
-    // Stall: below stall speed the nose drops and the wings stop answering.
-    const stalled = state.speed < CONFIG.stallSpeed && !state.onGround;
-    if (stalled) {
-      state.pitch += (-0.35 - state.pitch) * Math.min(1, 1.5 * dt);
-      state.roll *= (1 - 0.4 * dt);
+    // --- autopilot overrides input when set ---
+    if (this.auto) {
+      var dx = this.auto.x - this.pos.x, dz = this.auto.z - this.pos.z;
+      var want = Math.atan2(dx, dz);
+      var diff = want - this.heading;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      rollIn = R.clamp(-diff * 1.6, -1, 1); // bank toward the target: heading rises when rolling left
+      var altErr = this.auto.alt - this.pos.y;
+      pitchIn = R.clamp(-altErr * 0.03, -1, 1);
+      throttleIn = this.auto.slow ? -0.15 : 0.3;
     }
 
-    // --- Position ---
-    const fwd = forward();
-    const lift = Math.max(0, state.speed * CONFIG.liftFactor);
-    // Level flight balances near 47 m/s (throttle ~0.75): slower flight sinks
-    // gently, faster flight climbs — throttle discipline holds altitude.
-    const vy = Math.sin(state.pitch) * state.speed + (lift - 2.6) * 4.0;
-    state.vel.set(
-      fwd.x * state.speed + wind.x,
-      vy,
-      fwd.z * state.speed + wind.z,
-    );
-    // Volcano thermal: rising air on the sunny shoulder lifts the plane.
-    const dx = state.pos.x - CONFIG.volcano.x, dz = state.pos.z - CONFIG.volcano.z;
-    const vd = Math.sqrt(dx * dx + dz * dz);
-    if (vd < CONFIG.volcano.radius && state.pos.y < 700) {
-      state.vel.y += 3.2 * (1 - vd / CONFIG.volcano.radius);
+    // --- throttle / speed ---
+    this.throttle = R.clamp(this.throttle + throttleIn * 0.5 * dt, 0, 1);
+    if (this.fuel <= 0) this.throttle = 0;
+    var targetSpeed = 16 + this.throttle * 46;
+    this.speed += (targetSpeed - this.speed) * Math.min(1, dt * 0.9);
+
+    // --- bank -> turn, pitch -> climb ---
+    var targetRoll = rollIn * 0.85;
+    this.roll += (targetRoll - this.roll) * Math.min(1, dt * 2.2);
+    this.heading += -this.roll * 0.55 * dt * (this.speed / 40);
+    var targetPitch = R.clamp(pitchIn * 0.32, -0.32, 0.32);
+    this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 2.0);
+
+    // --- integrate ---
+    var fx = Math.sin(this.heading), fz = Math.cos(this.heading);
+    this.pos.x += fx * this.speed * dt;
+    this.pos.z += fz * this.speed * dt;
+    this.pos.y += Math.sin(-this.pitch) * this.speed * dt;
+
+    // --- world bounds: steer back inside ---
+    var bx = R.clamp(this.pos.x, -1150, 1150), bz = R.clamp(this.pos.z, -1150, 1150);
+    if (bx !== this.pos.x || bz !== this.pos.z) {
+      this.pos.x = bx; this.pos.z = bz;
+      this.heading += Math.PI * 0.9 * dt;
     }
-    state.pos.addScaledVector(state.vel, dt);
 
-    // --- Fuel ---
-    const burn = CONFIG.fuelBurnIdle + (CONFIG.fuelBurnCruise - CONFIG.fuelBurnIdle) * state.throttle;
-    state.fuel = Math.max(0, state.fuel - burn * dt);
-    if (state.fuel <= 0 && state.throttle > 0) state.throttle = 0;
+    // --- soft ground floor ---
+    var ground = this.groundBelow();
+    var minAlt = ground + 4;
+    if (this.pos.y < minAlt) this.pos.y = minAlt;
+    if (this.pos.y > 420) this.pos.y = 420;
 
-    // --- Ground ---
-    const ground = Terrain.heightAt(state.pos.x, state.pos.z);
-    const clearance = state.pos.y - ground;
-    let event = null;
-    const rw = CONFIG.runway;
-    const onStrip = Math.abs(state.pos.x - rw.x) < rw.width / 2 + 4 &&
-                    Math.abs(state.pos.z - rw.z) < rw.length / 2;
-    // A crash is a FIRST contact with the ground: once the plane is rolling
-    // on the ground it cannot crash again — it rolls out instead.
-    const wasAirborne = !state.onGround;
-    if (clearance <= 2.5) {
-      if (onStrip && Math.abs(state.pitch) < 0.22 && Math.abs(state.roll) < 0.3 &&
-          state.speed < 48 && state.speed > 4) {
-        // Touchdown: gentle enough to count as a landing. The band starts at
-        // 4 m/s — a slow, gentle touchdown (6–12 m/s) is a landing, not a
-        // crash; the old >12 floor sent those straight to TERRAIN STRIKE.
-        state.onGround = true;
-        state.touchdown = true;
-        state.pos.y = ground + 2.5;
-        state.speed = Math.max(0, state.speed - 26 * dt);
-        if (state.speed < 6) { state.landed = true; event = { type: 'landed' }; }
-      } else if (state.speed > 4 && wasAirborne && state.invuln <= 0) {
-        // Terrain strike.
-        state.hull -= CONFIG.terrainHitDamage;
-        state.struck = true;
-        state.invuln = 1.5;
-        state.pos.y = ground + 2.5;
-        state.speed *= 0.35;
-        event = { type: 'crash', hull: state.hull };
-        if (state.hull <= 0) { state.crashed = true; event.type = 'destroyed'; }
-        else { state.pitch = 0.25; }
-      } else {
-        // Rolling out on the ground: no extra damage, just friction.
-        state.onGround = true;
-        state.pos.y = ground + 2.5;
-        state.speed = Math.max(0, state.speed - 10 * dt * (state.throttle < 0.7 ? 1 : 0.2));
-        // A first contact too slow for the touchdown band (deep-stall sink
-        // onto the strip) still counts as a landing if nothing was struck.
-        // So does a proper strip touchdown that rolled a few metres off the
-        // centreline on the wind before slowing below 6 m/s.
-        if (state.speed < 6 && !state.struck && !state.landed &&
-            (onStrip || state.touchdown)) {
-          state.landed = true; event = { type: 'landed' };
-        }
+    // --- scoop: low + fast over the lake ---
+    this.scooping = false;
+    if (T.isOverLake(this.pos.x, this.pos.z) && this.pos.y < 8 && this.speed > 22 && this.water < 100) {
+      this.scooping = true;
+      this.water = Math.min(100, this.water + 30 * dt);
+    }
+
+    // --- drop: SPACE (or click) while tanked ---
+    var wantDrop = !!k['Space'] || !!k['MouseDrop'];
+    if (wantDrop && this.water > 0 && !this.dropping) this.dropping = true;
+    if (this.dropping) {
+      this.dropTimer += dt;
+      this.water = Math.max(0, this.water - 55 * dt);
+      if (this.dropTimer >= 0.12) {
+        this.dropTimer = 0;
+        this.fires.dropWater(this.pos.x, this.pos.z, 0.34);
       }
-    } else {
-      state.onGround = false;
-      state.touchdown = false; // airborne again — a later touchdown must earn its own credit
+      if (this.water <= 0 || !wantDrop) this.dropping = false;
     }
 
-    // --- Bounds: turn back at the map edge ---
-    const half = CONFIG.worldSize / 2 - 60;
-    if (Math.abs(state.pos.x) > half || Math.abs(state.pos.z) > half) {
-      state.heading += Math.PI * dt * 0.4;
-    }
-    if (state.pos.y > 1400) state.pos.y = 1400;
+    this.fuel = Math.max(0, this.fuel - 0.12 * dt);
+  };
 
-    return { event, clearance, stalled, wind, onStrip };
-  }
+  // Forward vector (unit) in world space.
+  Physics.prototype.forward = function () {
+    return { x: Math.sin(this.heading), z: Math.cos(this.heading) };
+  };
 
-  function applyToPlane(plane) {
-    plane.position.copy(state.pos);
-    plane.rotation.order = 'YXZ';
-    plane.rotation.y = state.heading;
-    plane.rotation.x = -state.pitch;
-    plane.rotation.z = -state.roll;
-  }
+  // The harness reads window.Physics.state — keep these exact fields.
+  Physics.prototype.expose = function () {
+    var self = this;
+    global.Physics = {
+      state: {
+        get speed() { return self.speed; },
+        get throttle() { return self.throttle; },
+        get pos() { return self.pos; },
+        get roll() { return self.roll; },
+        get heading() { return self.heading; },
+        get fuel() { return self.fuel; },
+        get water() { return self.water; }
+      }
+    };
+  };
 
-  function headingDeg() {
-    // Heading in degrees, 0 = north, growing clockwise (east = 90).
-    let d = (state.heading * 180) / Math.PI % 360;
-    if (d < 0) d += 360;
-    return d;
-  }
-
-  function windDesc() {
-    const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-    const deg = ((state.windDir * 180) / Math.PI % 360 + 360) % 360;
-    const idx = Math.round(deg / 45) % 8;
-    const kt = Math.round(state.windSpeed * 1.94);
-    return { text: kt + ' kt ' + dirs[idx], gust: state.gust > 0.55 ? 'STRONG' : state.gust > 0.15 ? 'MODERATE' : 'CALM' };
-  }
-
-  return { state, reset, step, applyToPlane, headingDeg, windDesc, forward };
-})();
+  global.AshPhysics = { Physics: Physics };
+})(typeof window !== 'undefined' ? window : globalThis);

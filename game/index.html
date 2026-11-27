@@ -2,137 +2,85 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Aurora Ring Run — Polar Night Flight</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASHWING — Wildfire Airtanker</title>
 <link rel="icon" href="data:,">
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1a0f2e; }
-  #app { position: fixed; inset: 0; }
-  canvas { display: block; }
-  /* ---------- HUD ---------- */
-  #hud { position: absolute; inset: 0; pointer-events: none; font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: #eaf6ff; }
-  .panel { position: absolute; background: rgba(8, 18, 34, 0.68); border: 1px solid rgba(140, 220, 255, 0.35);
-           border-radius: 10px; padding: 8px 12px; backdrop-filter: blur(2px);
-           box-shadow: 0 0 18px rgba(0, 180, 255, 0.18), inset 0 0 24px rgba(0, 140, 255, 0.08); }
-  .label { font-size: 10px; letter-spacing: 0.22em; color: #8fd8ff; text-transform: uppercase; }
-  .value { font-size: 30px; font-weight: 700; line-height: 1.05; color: #fff; text-shadow: 0 0 12px rgba(0, 200, 255, 0.65); font-variant-numeric: tabular-nums; }
-  .unit { font-size: 11px; color: #9fd4ff; margin-left: 3px; }
-  #altBox { left: 18px; top: 16px; min-width: 118px; }
-  #spdBox { left: 18px; top: 108px; min-width: 118px; }
-  #hdgBox { left: 18px; top: 200px; min-width: 118px; }
-  #compass { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); width: 340px; text-align: center;
-             background: rgba(8, 18, 34, 0.85); border: 1px solid rgba(140, 220, 255, 0.35); border-radius: 10px; padding: 6px 10px 8px; }
-  #compassTape { font-size: 15px; letter-spacing: 0.35em; color: #cfeeff; font-weight: 600; }
-  #compassNeedle { color: #7fe0d4; font-size: 18px; line-height: 0.8; }
-  #missionBox { right: 18px; top: 16px; width: 248px; }
-  #missionTitle { font-size: 15px; font-weight: 700; color: #7fe0d4; letter-spacing: 0.04em; }
-  #missionGoal { font-size: 12.5px; color: #d8ecff; margin-top: 4px; line-height: 1.45; }
-  #missionProg { font-size: 12px; color: #8fd8ff; margin-top: 6px; }
-  .barOuter { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.14); margin-top: 6px; overflow: hidden; }
-  .barInner { height: 100%; border-radius: 4px; }
-  #fuelBar { background: linear-gradient(90deg, #ffb347, #ffcf6e); box-shadow: 0 0 10px rgba(255, 180, 70, 0.7); }
-  #hullBar { background: linear-gradient(90deg, #37e08b, #7dffb0); box-shadow: 0 0 10px rgba(80, 255, 150, 0.6); }
-  #throttleBox { right: 18px; top: 218px; width: 120px; text-align: center; }
-  #thrValue { font-size: 26px; font-weight: 700; color: #fff; text-shadow: 0 0 12px rgba(255, 180, 70, 0.7); }
-  #attitude { position: absolute; right: 18px; top: 330px; width: 132px; height: 132px; border-radius: 50%;
-              border: 1px solid rgba(140, 220, 255, 0.4); overflow: hidden; background: #0a2036; }
-  #attSky { position: absolute; left: -60%; top: -60%; width: 220%; height: 120%; background: linear-gradient(#7ec8f7, #cfeeff); }
-  #attGnd { position: absolute; left: -60%; top: 60%; width: 220%; height: 120%; background: linear-gradient(#8a5a2e, #5d3a1a); }
-  #attHorizon { position: absolute; left: 0; right: 0; top: 50%; height: 2px; background: #fff; }
-  #attPlane { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #ffd23e; font-size: 22px; font-weight: 900; text-shadow: 0 0 8px #000; }
-  #attLabel { position: absolute; left: 0; right: 0; bottom: 4px; text-align: center; font-size: 9px; letter-spacing: 0.2em; color: #8fd8ff; }
-  #centerMsg { position: absolute; left: 50%; top: 34%; transform: translate(-50%, -50%); text-align: center; width: 640px; }
-  #centerTitle { font-size: 34px; font-weight: 800; color: #fff; text-shadow: 0 2px 18px rgba(0,0,0,0.7), 0 0 26px rgba(255, 180, 80, 0.55); letter-spacing: 0.02em; }
-  #centerSub { font-size: 15px; color: #ffe9c4; margin-top: 6px; text-shadow: 0 1px 10px rgba(0,0,0,0.8); }
-  #warn { position: absolute; left: 50%; bottom: 108px; transform: translateX(-50%); font-size: 17px; font-weight: 800;
-          color: #ff5d5d; text-shadow: 0 0 14px rgba(255, 40, 40, 0.8); letter-spacing: 0.12em; display: none; }
-  #keys { position: absolute; left: 18px; bottom: 16px; font-size: 11.5px; line-height: 1.7; color: #bfe6ff;
-          background: rgba(8, 18, 34, 0.5); border: 1px solid rgba(140, 220, 255, 0.25); border-radius: 8px; padding: 8px 12px; }
-  #keys b { color: #fff; }
-  #scoreBox { position: absolute; right: 18px; bottom: 16px; text-align: right; }
-  #scoreVal { font-size: 30px; font-weight: 800; color: #ffd23e; text-shadow: 0 0 14px rgba(255, 200, 60, 0.7); }
-  #windBox { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); font-size: 12px; color: #bfe6ff;
-             background: rgba(8, 18, 34, 0.5); border: 1px solid rgba(140, 220, 255, 0.25); border-radius: 8px; padding: 6px 12px; }
-  /* ---------- Title / end screens ---------- */
-  .screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-            background: radial-gradient(ellipse at 50% 38%, rgba(10, 10, 40, 0.18) 0%, rgba(6, 6, 26, 0.62) 78%); text-align: center; }
-  .gameTitle { font-size: 64px; font-weight: 900; letter-spacing: 0.06em; color: #fff;
-               text-shadow: 0 4px 30px rgba(255, 140, 40, 0.75), 0 2px 8px rgba(0,0,0,0.8); }
-  .gameSub { font-size: 19px; color: #ffe3b0; margin-top: 8px; letter-spacing: 0.14em; text-transform: uppercase; }
-  .screenCard { margin-top: 26px; background: rgba(8, 18, 34, 0.62); border: 1px solid rgba(140, 220, 255, 0.35); border-radius: 12px;
-                padding: 16px 26px; font-size: 14.5px; line-height: 1.75; color: #d8ecff; max-width: 560px; }
-  .screenCard b { color: #ffd23e; }
-  .bigBtn { pointer-events: auto; cursor: pointer; margin-top: 26px; font-size: 19px; font-weight: 800; letter-spacing: 0.1em;
-            color: #1a1206; background: linear-gradient(180deg, #ffd76e, #ff9d2e); border: none; border-radius: 12px;
-            padding: 14px 42px; box-shadow: 0 6px 26px rgba(255, 150, 40, 0.55); }
-  .bigBtn:hover { filter: brightness(1.1); }
-  #titleScreen, #endScreen { display: none; }
-  #vignette { position: absolute; inset: 0; pointer-events: none;
-              background: radial-gradient(ellipse at center, transparent 58%, rgba(5, 5, 20, 0.42) 100%); }
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1a1210; font-family: "Segoe UI", Verdana, sans-serif; }
+  #game { display: block; width: 100vw; height: 100vh; }
+  .panel { position: absolute; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8); pointer-events: none; }
+  #topbar { top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; padding: 10px 14px; background: linear-gradient(180deg, rgba(20,8,4,.72), rgba(20,8,4,0)); }
+  #topbar .brand { font-size: 26px; font-weight: 900; letter-spacing: 3px; color: #ffb62e; }
+  #topbar .brand small { display: block; font-size: 11px; letter-spacing: 4px; color: #ffd9a0; font-weight: 700; }
+  #topbar .mission { font-size: 13px; font-weight: 700; letter-spacing: 2px; color: #ffe9c9; margin-top: 4px; }
+  #topbar .stats { text-align: center; font-size: 13px; font-weight: 700; letter-spacing: 1px; }
+  #topbar .stats b { color: #ffb62e; font-size: 20px; }
+  #topbar .meters { text-align: right; font-size: 12px; font-weight: 700; letter-spacing: 1px; }
+  .bar { width: 170px; height: 10px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.5); border-radius: 5px; overflow: hidden; margin: 2px 0 6px auto; }
+  .bar > div { height: 100%; }
+  #townFill { background: linear-gradient(90deg, #37d67a, #9be15d); width: 100%; }
+  #waterFill { background: linear-gradient(90deg, #2fa8ff, #7fd4ff); width: 0%; }
+  #gauges { left: 14px; bottom: 12px; font-size: 15px; font-weight: 800; letter-spacing: 1px; background: rgba(20,8,4,.55); border: 1px solid rgba(255,182,46,.55); border-radius: 8px; padding: 8px 12px; }
+  #gauges span { color: #ffb62e; }
+  #gauges .warn { color: #ff5a3c; }
+  #msg { left: 50%; bottom: 88px; transform: translateX(-50%); font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #ffe9c9; background: rgba(20,8,4,.55); padding: 6px 16px; border-radius: 8px; }
+  #hint { right: 14px; bottom: 12px; text-align: right; font-size: 12px; font-weight: 600; line-height: 1.6; color: #ffe9c9; background: rgba(20,8,4,.45); padding: 6px 10px; border-radius: 8px; }
+  #title, #end { inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 8vh; text-align: center; background: radial-gradient(ellipse at 50% 30%, rgba(20,6,2,.10), rgba(20,6,2,.55)); }
+  #end { justify-content: center; padding-top: 0; }
+  #title h1 { margin: 0; font-size: 84px; font-weight: 900; letter-spacing: 10px; color: #ffb62e; text-shadow: 0 0 26px rgba(255,110,20,.75), 0 3px 0 #7a2c00, 0 6px 18px rgba(0,0,0,.9); }
+  #title h2 { margin: 6px 0 0; font-size: 24px; font-weight: 800; letter-spacing: 8px; color: #fff; }
+  #title p { margin: 18px 0 0; font-size: 17px; font-weight: 600; color: #ffe9c9; max-width: 640px; line-height: 1.55; }
+  #title .go { margin-top: 26px; font-size: 20px; font-weight: 900; letter-spacing: 3px; color: #1a1210; background: #ffb62e; padding: 12px 28px; border-radius: 10px; box-shadow: 0 0 24px rgba(255,150,30,.8); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+  #end h1 { margin: 0; font-size: 64px; font-weight: 900; letter-spacing: 6px; color: #7dff9b; text-shadow: 0 0 24px rgba(60,255,120,.6), 0 3px 0 #064d1e, 0 6px 18px rgba(0,0,0,.9); }
+  #end h1.lost { color: #ff5a3c; text-shadow: 0 0 24px rgba(255,60,20,.7), 0 3px 0 #5d0d00, 0 6px 18px rgba(0,0,0,.9); }
+  #end .nums { margin-top: 14px; font-size: 20px; font-weight: 800; line-height: 1.9; color: #fff; background: rgba(20,8,4,.6); padding: 12px 26px; border-radius: 10px; }
+  #end .nums b { color: #ffb62e; }
+  #end .go { margin-top: 22px; font-size: 18px; font-weight: 900; letter-spacing: 2px; color: #1a1210; background: #ffb62e; padding: 10px 24px; border-radius: 10px; }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
-<div id="app"></div>
-<div id="hud">
-  <div id="vignette"></div>
-  <div class="panel" id="altBox"><div class="label">Altitude</div><div><span class="value" id="altVal">0</span><span class="unit">ft</span></div><div class="label" id="altTrend" style="margin-top:2px">LEVEL</div></div>
-  <div class="panel" id="spdBox"><div class="label">Airspeed</div><div><span class="value" id="spdVal">0</span><span class="unit">kt</span></div><div class="label" id="spdNote" style="margin-top:2px">CRUISE</div></div>
-  <div class="panel" id="hdgBox"><div class="label">Heading</div><div><span class="value" id="hdgVal">000&deg;</span></div><div class="label" id="hdgName" style="margin-top:2px">NORTH</div></div>
-  <div id="compass"><div id="compassNeedle">&#9660;</div><div id="compassTape">N &nbsp; 030 &nbsp; 060 &nbsp; E &nbsp; 120 &nbsp; 150 &nbsp; S &nbsp; 210 &nbsp; 240 &nbsp; W &nbsp; 300 &nbsp; 330</div></div>
-  <div class="panel" id="missionBox">
-    <div id="missionTitle">SORTIE 1 &middot; AURORA RING RUN</div>
-    <div id="missionGoal">Thread all 12 aurora rings over the frozen bay and the glacier. Ride the aurora updrafts.</div>
-    <div id="missionProg">RINGS 0 / 12 &nbsp;&middot;&nbsp; TIME 0:00</div>
-    <div class="label" style="margin-top:8px">Fuel</div><div class="barOuter"><div class="barInner" id="fuelBar" style="width:100%"></div></div>
-    <div class="label" style="margin-top:6px">Airframe</div><div class="barOuter"><div class="barInner" id="hullBar" style="width:100%"></div></div>
-  </div>
-  <div class="panel" id="throttleBox"><div class="label">Throttle</div><div id="thrValue">0%</div><div class="label" id="thrNote">IDLE</div></div>
-  <div id="attitude"><div id="attSky"></div><div id="attGnd"></div><div id="attHorizon"></div><div id="attPlane">&#9992;</div><div id="attLabel">ATTITUDE</div></div>
-  <div id="centerMsg"><div id="centerTitle"></div><div id="centerSub"></div></div>
-  <div id="warn">PULL UP &mdash; TERRAIN</div>
-  <div id="keys">
-    <b>W / S</b> throttle &nbsp; <b>&larr; &rarr;</b> bank &nbsp; <b>&uarr;</b> climb &nbsp; <b>&darr;</b> dive<br>
-    <b>A / D</b> rudder &nbsp; <b>Space</b> airbrake &nbsp; <b>C</b> camera &nbsp; <b>M</b> mute<br>
-    <b>P</b> pause &nbsp; <b>R</b> restart sortie &nbsp; <b>1&ndash;3</b> choose sortie
-  </div>
-  <div id="scoreBox"><div class="label">Score</div><div id="scoreVal">0</div><div class="label" id="bestLine">BEST 0</div></div>
-  <div id="windBox">WIND <b id="windVal">8 kt NW</b> &nbsp;&middot;&nbsp; GUSTS <b id="gustVal">CALM</b> &nbsp;&middot;&nbsp; VIS 24 KM</div>
+<canvas id="game"></canvas>
 
-  <div class="screen" id="titleScreen">
-    <div class="gameTitle">AURORA RING RUN</div>
-    <div class="gameSub">Polar night flight over the frozen bay</div>
-    <div class="screenCard">
-      Fly the Beaver floatplane under the aurora, out of Polaris Station.
-      Three sorties: <b>1 &middot; Aurora Ring Run</b> &mdash; thread 12 rings &nbsp; <b>2 &middot; River Supply Drop</b> &mdash; low along the ice river, drop 6 supply crates &nbsp;
-      <b>3 &middot; Glacier Water Landing</b> &mdash; set down on the lit water lane in the dark, floats down, gentle as you can.
-      Fuel and airframe are real. The bay is not forgiving.
-    </div>
-    <button class="bigBtn" id="flyBtn">FLY SORTIE 1</button>
-    <div style="margin-top:14px;font-size:12.5px;color:#9fd4ff">W/S throttle &middot; arrows to fly &middot; C camera &middot; click FLY or press Enter</div>
+<div id="topbar" class="panel">
+  <div>
+    <div class="brand">ASHWING<small>WILDFIRE AIRTANKER</small></div>
+    <div class="mission" id="missionName">FIRE ATTACK</div>
   </div>
-
-  <div class="screen" id="endScreen">
-    <div class="gameTitle" id="endTitle">SORTIE COMPLETE</div>
-    <div class="gameSub" id="endSub">The valley remembers a good pilot.</div>
-    <div class="screenCard" id="endStats"></div>
-    <button class="bigBtn" id="againBtn">FLY AGAIN</button>
-    <div style="margin-top:14px;font-size:12.5px;color:#9fd4ff">Press Enter to fly again &middot; 1&ndash;3 to pick another sortie</div>
+  <div class="stats">FIRES <b id="fireCount">0</b> &nbsp;·&nbsp; ACRES SAVED <b id="acreCount">0</b> &nbsp;·&nbsp; SCORE <b id="scoreCount">0</b></div>
+  <div class="meters">
+    <div>TOWN HEALTH</div><div class="bar"><div id="townFill"></div></div>
+    <div>WATER TANK</div><div class="bar"><div id="waterFill"></div></div>
   </div>
 </div>
+
+<div id="gauges" class="panel">SPD <span id="gSpd">0</span> kt &nbsp; ALT <span id="gAlt">0</span> ft &nbsp; HDG <span id="gHdg">000</span>° &nbsp; THR <span id="gThr">0</span>% &nbsp; FUEL <span id="gFuel">100</span>%</div>
+<div id="msg" class="panel hidden"></div>
+<div id="hint" class="panel">W/S throttle &nbsp;·&nbsp; ←/→ bank &nbsp;·&nbsp; ↑/↓ pitch<br>SPACE drop water &nbsp;·&nbsp; CLICK drop &nbsp;·&nbsp; 1/2/3 missions &nbsp;·&nbsp; R restart</div>
+
+<div id="title" class="panel">
+  <h1>ASHWING</h1>
+  <h2>WILDFIRE AIRTANKER</h2>
+  <p>Scoop the lake. Drown the fire line. Save Cedar Falls.<br>The fires spread while you fly — every drop counts.</p>
+  <div class="go">ENTER / CLICK TO FLY</div>
+</div>
+
+<div id="end" class="panel hidden">
+  <h1 id="endTitle">TOWN SAVED</h1>
+  <div class="nums" id="endNums"></div>
+  <div class="go">PRESS R TO FLY AGAIN</div>
+</div>
+
 <script src="vendor/three.min.js"></script>
-<script src="src/config.js"></script>
-<script src="src/random.js"></script>
+<script src="src/rng.js"></script>
 <script src="src/terrain.js"></script>
-<script src="src/life.js"></script>
-<script src="src/sky.js"></script>
-<script src="src/aircraft.js"></script>
-<script src="src/rings.js"></script>
-<script src="src/audio.js"></script>
-<script src="src/input.js"></script>
+<script src="src/forest.js"></script>
+<script src="src/airtanker.js"></script>
+<script src="src/fires.js"></script>
 <script src="src/physics.js"></script>
 <script src="src/missions.js"></script>
 <script src="src/hud.js"></script>
-<script src="src/shots.js"></script>
 <script src="src/main.js"></script>
 </body>
 </html>

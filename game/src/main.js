@@ -1,254 +1,258 @@
-// Merapi Ring Run — boot, render loop, cameras and game flow.
-// One clear job: own the frame — input → physics → missions → render → HUD.
+// Ashwing — boot and director. One job: assemble the world, run the
+// loop, and stage the four screenshots. Shot modes come from the URL:
+// ?shot=cover (title) | river (scoop run) | dusk (water drop) |
+// landing (end screen) | play (interactive). The playtest harness
+// drives ?shot=play with real keys.
+(function () {
+  'use strict';
+  var R = window.AshRng;
+  var T = window.AshTerrain;
 
-const Game = (function buildMainModule() {
-  let renderer, scene, camera;
-  let plane;
-  let cameraMode = 'chase';
-  let autopilot = false;
-  let paused = false;
-  let running = false;      // a sortie is in progress
-  let endShown = false;     // end screen already shown for this sortie
-  let settle = 0;           // frames to run before a screenshot is "settled"
-  let clock = 0;
-  let camShake = 0;
-  const tmpV = new THREE.Vector3();
+  var params = new URLSearchParams(window.location.search);
+  var SHOT = params.get('shot') || 'play';
+  var SEED = parseInt(params.get('seed') || '1', 10) || 1;
+  var rng = R.makeRng(SEED * 7919 + 13);
 
-  function boot() {
-    const app = document.getElementById('app');
-    renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); // cap 1.5: dpr 2 quadruples fragment work on hi-dpi screens for no visible gain at this art style
+  var canvas = document.getElementById('game');
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: false });
+  renderer.setPixelRatio(1);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x2a2140, 1);
+
+  var scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x9a6248, 650, 3000);
+  var camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, 7000);
+  camera.position.set(-560, 60, -620);
+
+  // --- world ---
+  scene.add(T.buildSkyDome());
+  scene.add(T.buildSunDisc());
+  scene.add(T.buildTerrainMesh());
+  scene.add(T.buildLakeMesh());
+  scene.add(T.buildGlintMesh());
+  scene.add(T.buildRidgeRing(rng));
+  var lights = T.buildLights();
+  scene.add(lights);
+  scene.add(window.AshForest.buildForest(rng));
+  var townGroup = window.AshForest.buildTown(rng);
+  scene.add(townGroup);
+
+  var fires = new window.AshFires.FireField(scene, rng);
+  var physics = new window.AshPhysics.Physics(fires);
+  var missions = new window.AshMissions.Missions(physics, fires, rng);
+  var hud = new window.AshHud.Hud();
+  var plane = window.AshAirtanker.buildAirtanker();
+  plane.rotation.order = 'YXZ';
+  scene.add(plane);
+  var spray = window.AshAirtanker.buildSpray();
+  scene.add(spray);
+
+  physics.expose();
+  missions.expose();
+
+  // --- input ---
+  function onKey(e, down) {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].indexOf(e.code) >= 0) e.preventDefault();
+    physics.keys[e.code] = down;
+    if (!down) return;
+    if (e.code === 'Enter') startFlying();
+    if (e.code === 'Digit1') missions.setupMission(1);
+    if (e.code === 'Digit2') missions.setupMission(2);
+    if (e.code === 'Digit3') missions.setupMission(3);
+    if (e.code === 'KeyR') { missions.setupMission(missions.mission.id); hud.showEnd(false); }
+  }
+  window.addEventListener('keydown', function (e) { onKey(e, true); });
+  window.addEventListener('keyup', function (e) { onKey(e, false); });
+  canvas.addEventListener('mousedown', function () { physics.keys['MouseDrop'] = true; });
+  window.addEventListener('mouseup', function () { physics.keys['MouseDrop'] = false; });
+  canvas.addEventListener('click', function () { startFlying(); });
+
+  var flying = false;
+  function startFlying() {
+    if (flying) return;
+    flying = true;
+    hud.showTitle(false);
+    missions.say('Scoop the lake — stay low and fast over the water');
+  }
+
+  // --- shot staging ---
+  var simTime = 0;
+  var settled = false;
+  var shotTarget = 0; // sim-seconds to fast-forward before settling
+  var dropAt = -1;    // sim-time to trigger the scripted drop (dusk)
+  var autopilot = false;
+  var autoPhase = 'scoop';
+
+  function stageShot() {
+    if (SHOT === 'cover') {
+      missions.setupMission(1);
+      physics.reset(-140, -300, 75, 0.46, 60);
+      physics.auto = { x: 120, z: 220, alt: 80 };
+      shotTarget = 6;
+      hud.showTitle(true);
+    } else if (SHOT === 'river') {
+      missions.setupMission(1);
+      physics.reset(-820, -260, 6, Math.PI * 0.5, 0);
+      physics.throttle = 0.6;
+      shotTarget = 1.0; // settle mid-scoop, spray still flying
+      flying = true; hud.showTitle(false);
+    } else if (SHOT === 'dusk') {
+      missions.setupMission(1);
+      physics.reset(30, 110, 48, 0.71, 100);
+      physics.throttle = 0.62;
+      dropAt = 0.3;
+      shotTarget = 0.9; // settle while the burst is mid-fall
+      flying = true; hud.showTitle(false);
+    } else if (SHOT === 'landing') {
+      // Staged end screen: a short real mission the autopilot genuinely
+      // flies and wins — 3 low-intensity fires (they do not spread),
+      // full tank, plane already inbound. Stats on screen are the sim's.
+      missions.setupMission(1);
+      fires.clear();
+      fires.addFire(-60, 120, 0.5);
+      fires.addFire(20, 180, 0.5);
+      fires.addFire(90, 140, 0.5);
+      physics.reset(-260, -60, 50, 0.86, 100);
+      autoPhase = 'attack';
+      autopilot = true;
+      shotTarget = 120; // cap; settles early when the mission ends
+      flying = true; hud.showTitle(false);
+    } else { // play
+      missions.setupMission(1);
+      shotTarget = 1.5;
+      flying = true; hud.showTitle(false);
+    }
+  }
+
+  function autopilotStep(dt) {
+    if (!autopilot || missions.done) { physics.auto = null; return; }
+    var burning = fires.burningCount();
+    if (burning === 0) { physics.auto = null; return; }
+    if (autoPhase === 'scoop') {
+      var sdx = T.LAKE.x - physics.pos.x, sdz = T.LAKE.z - physics.pos.z;
+      var sdist = Math.sqrt(sdx * sdx + sdz * sdz);
+      physics.auto = { x: T.LAKE.x, z: T.LAKE.z, alt: 5, slow: sdist < 150 };
+      if (physics.water >= 98) autoPhase = 'attack';
+    } else {
+      // nearest burning fire
+      var best = null, bd = 1e12;
+      for (var i = 0; i < fires.fires.length; i++) {
+        var f = fires.fires[i];
+        if (f.intensity <= 0.02) continue;
+        var dx = f.x - physics.pos.x, dz = f.z - physics.pos.z;
+        var d = dx * dx + dz * dz;
+        if (d < bd) { bd = d; best = f; }
+      }
+      if (!best) { autoPhase = 'scoop'; return; }
+      var dist = Math.sqrt(bd);
+      physics.auto = { x: best.x, z: best.z, alt: 22, slow: dist < 150 };
+      physics.keys['Space'] = dist < 70 && physics.water > 0;
+      if (physics.water < 10) { autoPhase = 'scoop'; physics.keys['Space'] = false; }
+    }
+  }
+
+  function step(dt) {
+    autopilotStep(dt);
+    physics.step(dt);
+    fires.update(dt, simTime, missions.town);
+    missions.update(dt);
+    if (dropAt >= 0 && simTime >= dropAt) {
+      physics.keys['Space'] = true;
+      if (simTime >= dropAt + 1.0) { physics.keys['Space'] = false; dropAt = -1; }
+    }
+    simTime += dt;
+  }
+
+  function syncVisuals(dt, t) {
+    // plane transform from physics
+    plane.position.copy(physics.pos);
+    plane.rotation.y = physics.heading + Math.PI;
+    plane.rotation.x = -physics.pitch;
+    plane.rotation.z = -physics.roll;
+    var spin = dt * physics.speed * 0.9;
+    plane.userData.props[0].rotation.z += spin;
+    plane.userData.props[1].rotation.z += spin;
+    // spray behind the hull while scooping
+    var fwd = physics.forward();
+    var origin = {
+      x: physics.pos.x - fwd.x * 4,
+      y: Math.max(0.5, physics.pos.y - 1),
+      z: physics.pos.z - fwd.z * 4
+    };
+    window.AshAirtanker.updateSpray(spray, origin, fwd, dt, physics.scooping, t);
+    // fire glow flicker
+    lights.userData.fireGlow.intensity = 1.9 + Math.sin(t * 9.3) * 0.5 + Math.sin(t * 23.7) * 0.25;
+    // truck light bars blink
+    var trucks = townGroup.userData.trucks || [];
+    for (var i = 0; i < trucks.length; i++) {
+      trucks[i].userData.barMat.color.setHex(Math.floor(t * 2 + i) % 2 === 0 ? 0xff2a1e : 0x2a6bff);
+    }
+    // chase camera: pulled back with a side offset so the airtanker reads
+    // as a three-quarter silhouette and the valley ahead dominates
+    var dist = SHOT === 'dusk' ? 15 : (SHOT === 'cover' ? 24 : (SHOT === 'river' ? 19 : 22));
+    var height = SHOT === 'dusk' ? 5 : (SHOT === 'river' ? 4.5 : 6.5);
+    var rx = -Math.cos(physics.heading), rz = Math.sin(physics.heading); // right vector
+    var cx = physics.pos.x - fwd.x * dist + rx * 11;
+    var cz = physics.pos.z - fwd.z * dist + rz * 11;
+    var cy = physics.pos.y + height;
+    var ground = T.heightAt(cx, cz);
+    if (cy < ground + 3) cy = ground + 3;
+    var k = 1 - Math.exp(-3.2 * Math.max(dt, 0.001));
+    camera.position.x += (cx - camera.position.x) * k;
+    camera.position.y += (cy - camera.position.y) * k;
+    camera.position.z += (cz - camera.position.z) * k;
+    camera.lookAt(physics.pos.x + fwd.x * 34, physics.pos.y + 1.5, physics.pos.z + fwd.z * 34);
+    hud.update(physics, missions, fires);
+    if (missions.done) hud.showEnd(true, missions.won, fires, missions);
+  }
+
+  function render() {
+    renderer.render(scene, camera);
+  }
+
+  // --- fast-forward the staged shot, then start the live loop ---
+  stageShot();
+  var guard = 0;
+  while (simTime < shotTarget && guard < 20000) {
+    step(1 / 60);
+    guard++;
+    if (SHOT === 'landing' && missions.done) break;
+  }
+  syncVisuals(1 / 60, simTime);
+  render();
+  window.__gameReady = true;
+  if (simTime >= shotTarget || (SHOT === 'landing' && missions.done)) {
+    window.__shotSettled = true;
+    settled = true;
+  }
+
+  var last = performance.now();
+  function loop(now) {
+    requestAnimationFrame(loop);
+    // rAF timestamps can step backward in headless runs (screenshot /
+    // compositor hitches): a negative dt would diverge speed and grow
+    // the tank through the drop path, so clamp it to [0, 0.25].
+    var dt = Math.max(0, Math.min((now - last) / 1000, 0.25));
+    last = now;
+    if (!settled) {
+      step(dt);
+      if (simTime >= shotTarget || (SHOT === 'landing' && missions.done)) {
+        settled = true;
+        window.__shotSettled = true;
+      }
+    } else {
+      step(dt);
+    }
+    syncVisuals(dt, simTime);
+    render();
+  }
+  requestAnimationFrame(loop);
+
+  window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    app.appendChild(renderer.domElement);
+  });
 
-    scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, 15000);
-    camera.position.set(0, 300, 1900);
-
-    Sky.buildSky(scene, renderer);
-    Terrain.buildTerrainMesh(scene);
-    Terrain.buildRiver(scene);
-    Terrain.buildRunway(scene);
-    Terrain.buildVolcanoSmoke(scene);
-    Terrain.buildVillages(scene);
-    Terrain.buildTrees(scene);
-    Terrain.buildSea(scene);
-    Terrain.buildBoats(scene);
-    Terrain.buildLighthouse(scene);
-    Terrain.buildPalms(scene);
-    Life.build(scene);
-    plane = Aircraft.buildAircraft(scene);
-    Rings.buildRings(scene);
-    Rings.buildMarkers(scene);
-
-    Input.init();
-    Input.setKeyHandler(onKey);
-    document.getElementById('flyBtn').addEventListener('click', () => startSortie(0));
-    document.getElementById('againBtn').addEventListener('click', () => startSortie(Missions.getState().mission.id - 1));
-
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-
-    // Screenshot staging (?shot=...) or the title screen.
-    const query = new URLSearchParams(window.location.search);
-    const staged = Shots.apply(query, api);
-    if (!staged) {
-      HUD.showTitle();
-      Missions.select(0);
-      Missions.start();
-      running = false;
-      api.setCameraMode('orbit-title');
-    }
-
-    let last = performance.now();
-    function frame(now) {
-      requestAnimationFrame(frame);
-      const rawDt = Math.max(0, (now - last) / 1000);
-      last = now;
-      // Fixed-step simulation: on a slow renderer one wall second can be a
-      // single frame, and clamping dt to 0.05 made the game run at 1/20 speed.
-      // Instead, advance up to 1.0 s of game time per rendered frame in
-      // 0.05 s slices, so physics stays stable AND the game keeps real-time
-      // pace even at ~1 FPS. At 60 fps this is exactly one ~0.0167 s step —
-      // behaviour unchanged. (Physics is cheap vs the render; 20 slices/frame
-      // cost milliseconds, while the render costs ~a second.)
-      if (!paused) {
-        const simDt = Math.min(rawDt, 1.0);
-        const steps = Math.max(1, Math.ceil(simDt / 0.05));
-        const h = simDt / steps;
-        for (let i = 0; i < steps; i++) tick(h, h);
-        // Screenshot settle counts down in GAME seconds, not rendered frames:
-        // with substepping, 25 rendered frames can be 25 s of game time, and
-        // the staged plane would fly far from its setup before the shot.
-        if (settle > 0) {
-          settle -= simDt;
-          if (settle <= 0) { settle = 0; window.__shotSettled = true; }
-        }
-      }
-      renderer.render(scene, camera);
-    }
-    requestAnimationFrame(frame);
-    window.__gameReady = true;
-  }
-
-  function onKey(code) {
-    if (code === 'Enter') {
-      const title = document.getElementById('titleScreen');
-      const end = document.getElementById('endScreen');
-      if (title.style.display === 'flex') startSortie(0);
-      else if (end.style.display === 'flex') startSortie(Missions.getState().mission.id - 1);
-      return;
-    }
-    if (code === 'KeyP') { paused = !paused; return; }
-    if (code === 'KeyM') { AudioSys.toggleMute(); return; }
-    if (code === 'KeyC') {
-      cameraMode = cameraMode === 'chase' ? 'cockpit' : cameraMode === 'cockpit' ? 'chase-low' : 'chase';
-      return;
-    }
-    if (code === 'KeyR') { startSortie(Missions.getState().mission.id - 1); return; }
-    if (code === 'Digit1') startSortie(0);
-    if (code === 'Digit2') startSortie(1);
-    if (code === 'Digit3') startSortie(2);
-  }
-
-  function startSortie(index) {
-    Missions.select(index);
-    Missions.start();
-    running = true;
-    paused = false;
-    autopilot = false;
-    endShown = false;
-    cameraMode = 'chase';
-    HUD.hideScreens();
-    AudioSys.ensure();
-  }
-
-  function autopilotControls() {
-    const p = Physics.state;
-    const ms = Missions.getState();
-    let target = null;
-    let targetAlt = 230;
-    if (ms.mission.type === 'rings') {
-      target = Rings.nextRingPos();
-      if (target) targetAlt = target.y;
-    } else if (ms.mission.type === 'crates') {
-      target = new THREE.Vector3(Terrain.riverCenterX(p.pos.z - 300), 120, p.pos.z - 300);
-      targetAlt = 120;
-    } else {
-      target = new THREE.Vector3(CONFIG.runway.x, 120, CONFIG.runway.z);
-      targetAlt = Math.max(60, 120 + (p.pos.z - CONFIG.runway.z) * 0.12);
-    }
-    if (!target) return Input.controls();
-    const dx = target.x - p.pos.x, dz = target.z - p.pos.z;
-    let desired = Math.atan2(dx, -dz);
-    let err = desired - p.heading;
-    while (err > Math.PI) err -= Math.PI * 2;
-    while (err < -Math.PI) err += Math.PI * 2;
-    const roll = Math.max(-0.75, Math.min(0.75, err * 1.1));
-    const pitch = Math.max(-0.18, Math.min(0.22, (targetAlt - p.pos.y) * 0.0022));
-    return { pitch: pitch / 0.42, roll: roll / 0.95, yaw: 0, brake: 0 };
-  }
-
-  function tick(dt, rawDt) {
-    clock += dt;
-    const p = Physics.state;
-    const ctrl = autopilot ? autopilotControls() : Input.controls();
-    // Gentle throttle hold for the autopilot so shots stay airborne.
-    if (autopilot && p.throttle < 0.65) p.throttle = 0.65;
-
-    let stepInfo = { event: null, clearance: 999, stalled: false };
-    if (running) {
-      stepInfo = Physics.step(dt, ctrl);
-      Missions.update(dt, stepInfo);
-      if (stepInfo.event && (stepInfo.event.type === 'crash' || stepInfo.event.type === 'destroyed')) {
-        camShake = 0.6;
-      }
-      const ms = Missions.getState();
-      if (ms.finished && !endShown) {
-        endShown = true;
-        running = false;
-        setTimeout(() => HUD.showEnd(ms), 900);
-      }
-    } else {
-      // Title orbit: the plane sits on the strip, prop idling.
-      p.throttle = 0.12;
-    }
-
-    Physics.applyToPlane(plane);
-    Aircraft.update(dt, p.throttle, p.speed, clock);
-    Rings.update(dt, clock);
-    Sky.update(dt, clock);
-    Terrain.updateSea(dt, clock);
-    Life.update(dt, clock);
-    AudioSys.update(p.throttle, p.speed);
-    updateCamera(rawDt || dt);
-    HUD.update(dt, clock);
-  }
-
-  function updateCamera(dt) {
-    const p = Physics.state;
-    const fwd = Physics.forward();
-    const right = tmpV.set(Math.cos(p.heading), 0, Math.sin(p.heading)).clone();
-    // While a screenshot is settling, snap the camera — no lag trail.
-    const snap = settle > 0 ? 1 : Math.min(1, dt * 5);
-
-    if (cameraMode === 'cockpit') {
-      // Over the pilot's shoulder: nose and lit panel in frame.
-      const eye = p.pos.clone().addScaledVector(fwd, 1.4).add(new THREE.Vector3(0, 1.35, 0));
-      camera.position.copy(eye);
-      camera.lookAt(p.pos.clone().addScaledVector(fwd, 120).add(new THREE.Vector3(0, 1.0, 0)));
-      camera.rotation.z += -p.roll * 0.55;
-    } else if (cameraMode === 'chase-low') {
-      const eye = p.pos.clone().addScaledVector(fwd, -16).add(new THREE.Vector3(0, 4, 0));
-      camera.position.lerp(eye, snap);
-      camera.lookAt(p.pos.clone().addScaledVector(fwd, 90).add(new THREE.Vector3(0, 0.5, 0)));
-    } else if (cameraMode === 'title-fixed') {
-      // Title shot: parked on the strip, plane right of frame, volcano behind.
-      const eye = new THREE.Vector3(p.pos.x + 34, p.pos.y + 12, p.pos.z + 46);
-      camera.position.lerp(eye, settle > 0 ? 1 : Math.min(1, dt * 2.5));
-      // Look well west of the plane so it sits right of the title card.
-      camera.lookAt(p.pos.x - 60, p.pos.y + 3, p.pos.z);
-    } else if (cameraMode === 'orbit-title') {
-      const a = clock * 0.11;
-      const eye = new THREE.Vector3(
-        p.pos.x + Math.sin(a) * 26,
-        p.pos.y + 9 + Math.sin(clock * 0.3) * 1.2,
-        p.pos.z + Math.cos(a) * 26,
-      );
-      camera.position.lerp(eye, settle > 0 ? 1 : Math.min(1, dt * 2.5));
-      camera.lookAt(p.pos.x, p.pos.y + 2, p.pos.z);
-    } else {
-      // Chase: closer than v2 (18 m back, 6.2 up) — the aircraft fills the
-      // frame and reads as built, not a toy on the horizon.
-      const eye = p.pos.clone().addScaledVector(fwd, -18).add(new THREE.Vector3(0, 6.2, 0))
-        .addScaledVector(right, 3.0);
-      camera.position.lerp(eye, snap);
-      camera.lookAt(p.pos.clone().addScaledVector(fwd, 90).add(new THREE.Vector3(0, 1.0, 0)));
-    }
-    if (camShake > 0) {
-      camShake = Math.max(0, camShake - dt);
-      camera.position.x += (Math.random() - 0.5) * camShake * 2;
-      camera.position.y += (Math.random() - 0.5) * camShake * 2;
-    }
-  }
-
-  const api = {
-    boot,
-    startSortie,
-    setCameraMode(m) { cameraMode = m; },
-    setAutopilot(on) { autopilot = on; },
-    // n counts "frames" at the old 0.05 s simulation step: 25 frames ≈ 1.25 s
-    // of game time, on any hardware. (Settle is game-time based so the staged
-    // plane does not fly away from its setup on a slow renderer.)
-    settleFrames(n) { settle = n * 0.05; window.__shotSettled = false; },
-  };
-
-  return api;
+  window.__ashwing = { physics: physics, missions: missions, fires: fires, SHOT: SHOT, simTime: function () { return simTime; } };
 })();
-
-window.addEventListener('DOMContentLoaded', () => Game.boot());

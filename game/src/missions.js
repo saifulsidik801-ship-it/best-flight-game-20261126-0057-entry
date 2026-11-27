@@ -1,126 +1,120 @@
-// Aurora Ring Run v6 — sortie state machine. Three sortie types share one
-// flow: score for goals, a small trickle for flying fast, a time bonus on
-// a win, and a hard end on a wreck or an empty tank.
+// Ashwing — missions. One job: the three sorties and what winning
+// means. Score = acres saved and fires put out; the town takes damage
+// while fires burn close to it. Exposes window.Missions with the
+// state the playtest harness reads.
+(function (global) {
+  'use strict';
+  var T = global.AshTerrain;
 
-const Missions = (function buildMissionsModule() {
-  let mission = MISSIONS[0];
-  let score = 0;
-  let best = 0;
-  let done = 0;
-  let finished = false;
-  let won = false;
-  let elapsed = 0;
-  let lastEvent = null;
-  let lastAirSpeed = 0; // speed just before the floats touched — the softness test
+  var MISSIONS = [
+    { id: 1, name: 'FIRE ATTACK', goal: 'Put out every fire on the line' },
+    { id: 2, name: 'RIVER SCOOP RUN', goal: 'Fill the tank from the lake' },
+    { id: 3, name: 'TOWN DEFENSE', goal: 'Hold the line — the town is close' }
+  ];
 
-  function select(i) { mission = MISSIONS[i]; }
-
-  function start() {
-    Physics.reset(mission);
-    Rings.reset();
-    Rings.resetMarkers();
-    Rings.setGoalsVisible(mission.type);
-    Sky.setDusk(!!mission.dusk);
-    Aircraft.setLandingLight(!!mission.dusk);
-    score = 0;
-    done = 0;
-    finished = false;
-    won = false;
-    elapsed = 0;
-    lastEvent = null;
-    lastAirSpeed = 0;
+  function Missions(physics, fireField, rng) {
+    this.physics = physics;
+    this.fires = fireField;
+    this.rng = rng;
+    this.mission = MISSIONS[0];
+    this.done = false;
+    this.won = false;
+    this.score = 0;
+    this.town = { x: T.TOWN.x, z: T.TOWN.z, health: 100 };
+    this.message = '';
+    this.messageTimer = 0;
   }
 
-  function endSortie(w, reason) {
-    if (finished) return;
-    finished = true;
-    won = w;
-    if (w) score += Math.max(0, Math.floor(240 - elapsed)) * CONFIG.timeBonusPerSec;
-    score = Math.round(score);
-    if (score > best) best = score;
-    if (reason) lastEvent = { type: w ? 'won' : 'lost', text: reason };
-  }
+  Missions.prototype.say = function (text, seconds) {
+    this.message = text;
+    this.messageTimer = seconds || 3;
+  };
 
-  function update(dt, stepInfo) {
-    if (finished) return;
-    elapsed += dt;
-    const p = Physics.state;
-    if (!p.onGround) lastAirSpeed = p.speed;
-
-    if (mission.type === 'rings') {
-      if (Rings.checkPass(p.pos)) {
-        done++;
-        score += CONFIG.ringScore + Math.max(0, 60 - Math.floor(elapsed));
-        lastEvent = { type: 'ring', text: 'RING ' + done + ' / ' + mission.target };
-        if (done >= mission.target) {
-          endSortie(true, 'ALL ' + mission.target + ' RINGS — SORTIE CLEAR');
-          return;
-        }
-      }
-    } else if (mission.type === 'crates') {
-      const alt = p.pos.y - Terrain.heightAt(p.pos.x, p.pos.z);
-      if (Rings.checkCrate(p.pos, alt)) {
-        done++;
-        score += CONFIG.crateScore;
-        lastEvent = { type: 'crate', text: 'SUPPLY DROP ' + done + ' / ' + mission.target };
-        if (done >= mission.target) {
-          endSortie(true, 'ALL ' + mission.target + ' DROPS DELIVERED');
-          return;
-        }
-      }
-    } else if (mission.type === 'landing') {
-      if (stepInfo.event && stepInfo.event.type === 'landed') {
-        done = 1;
-        // Gentle touchdown pays: the slower the floats met the water, the
-        // bigger the bonus (touchdown is legal up to 48 m/s).
-        const soft = Math.max(0, Math.round((48 - lastAirSpeed) * 4));
-        score += CONFIG.landingScore + soft;
-        endSortie(true, 'LANDED ON THE LIT LANE — BEAVER DOWN SAFE');
-        return;
-      }
+  Missions.prototype.setupMission = function (id) {
+    var m = MISSIONS[id - 1] || MISSIONS[0];
+    this.mission = m;
+    this.done = false;
+    this.won = false;
+    var p = this.physics;
+    if (id === 1) {
+      this.fires.clear();
+      this.seedFireLine(6);
+      this.town.health = 100;
+      p.reset(-520, -560, 26, Math.PI * 0.5, 50);
+      this.say('FIRE ATTACK — scoop the lake, drop on the line');
+    } else if (id === 2) {
+      this.town.health = Math.max(this.town.health, 80);
+      p.reset(-820, -260, 6, Math.PI * 0.5, 0);
+      this.say('RIVER SCOOP RUN — stay low over the lake to fill the tank');
+    } else {
+      this.fires.clear();
+      this.seedFireLine(5);
+      // three fires already close to town
+      this.fires.addFire(T.TOWN.x - 190, T.TOWN.z + 60, 0.9);
+      this.fires.addFire(T.TOWN.x - 120, T.TOWN.z + 150, 0.85);
+      this.fires.addFire(T.TOWN.x - 60, T.TOWN.z - 170, 0.8);
+      this.town.health = 55;
+      p.reset(180, 60, 60, Math.PI * 0.9, 100);
+      this.say('TOWN DEFENSE — the fire is at the edge of Cedar Falls!');
     }
+  };
 
-    if (stepInfo.event) {
-      if (stepInfo.event.type === 'destroyed') {
-        lastEvent = { type: 'destroyed', text: 'WRECKED — HULL GONE' };
-        endSortie(false);
-        return;
+  // The fire line: a ragged row of fires in the forest between lake and town.
+  Missions.prototype.seedFireLine = function (count) {
+    for (var i = 0; i < count; i++) {
+      var t = count === 1 ? 0.5 : i / (count - 1);
+      var x = -60 + t * 420 + (this.rng() - 0.5) * 90;
+      var z = 60 + t * 320 + (this.rng() - 0.5) * 90;
+      if (T.isOverLake(x, z)) { x += 160; }
+      this.fires.addFire(x, z, 0.7 + this.rng() * 0.3);
+    }
+  };
+
+  Missions.prototype.update = function (dt) {
+    if (this.messageTimer > 0) this.messageTimer -= dt;
+    this.score = this.fires.score;
+    if (this.done) return;
+    var burning = this.fires.burningCount();
+    if (this.mission.id === 2) {
+      if (this.physics.water >= 98) {
+        this.done = true; this.won = true;
+        this.fires.score += 500;
+        this.score = this.fires.score;
+        this.say('TANK FULL — take it to the fire line!');
       }
-      if (stepInfo.event.type === 'crash') {
-        lastEvent = {
-          type: 'crash',
-          text: 'TERRAIN STRIKE — HULL ' + Math.max(0, Math.round(p.hull)) + '%',
+    } else if (burning === 0 && this.fires.fires.length > 0) {
+      this.done = true; this.won = true;
+      var bonus = Math.round(this.town.health * 5);
+      this.fires.score += bonus;
+      this.score = this.fires.score;
+      this.say('ALL FIRES OUT');
+    }
+    if (this.town.health <= 0 && !this.done) {
+      this.done = true; this.won = false;
+      this.say('THE TOWN IS LOST');
+    }
+    if (this.physics.scooping && this.mission.id !== 2) {
+      this.say('SCOOPING…');
+    } else if (this.physics.dropping) {
+      this.say('WATER AWAY — ON THE FIRE!');
+    } else if (this.physics.water >= 98 && this.mission.id !== 2 && burning > 0) {
+      this.say('TANK FULL — HIT THE FIRE LINE (SPACE to drop)');
+    }
+  };
+
+  // The harness reads window.Missions.getState() — keep these exact fields.
+  Missions.prototype.expose = function () {
+    var self = this;
+    global.Missions = {
+      getState: function () {
+        return {
+          mission: { id: self.mission.id, name: self.mission.name },
+          done: self.done,
+          score: self.score
         };
-        // A strike that did not destroy the plane does not end the sortie;
-        // the pilot flies on, damaged.
       }
-    }
-
-    if (p.fuel <= 0) {
-      lastEvent = { type: 'lost', text: 'OUT OF FUEL — GLIDE IT DOWN' };
-      endSortie(false);
-      return;
-    }
-
-    // Flying fast pays a little, every second — this is the score that
-    // shows in the screenshots mid-sortie.
-    if (p.speed > 30) score += dt * 1.5;
-  }
-
-  function getState() {
-    return {
-      mission, score: Math.round(score), best, done, finished, won,
-      elapsed, lastEvent, target: mission.target,
     };
-  }
+  };
 
-  function clearEvent() { lastEvent = null; }
-
-  function fmtTime(s) {
-    const m = Math.floor(s / 60);
-    const ss = Math.floor(s % 60);
-    return m + ':' + String(ss).padStart(2, '0');
-  }
-
-  return { select, start, update, getState, clearEvent, fmtTime };
-})();
+  global.AshMissions = { Missions: Missions, LIST: MISSIONS };
+})(typeof window !== 'undefined' ? window : globalThis);
