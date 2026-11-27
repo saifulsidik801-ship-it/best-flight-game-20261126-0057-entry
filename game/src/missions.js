@@ -41,7 +41,7 @@
       this.seedFireLine(6);
       this.town.health = 100;
       p.reset(-520, -560, 26, Math.PI * 0.5, 50);
-      this.say('FIRE ATTACK — scoop the lake, drop on the line');
+      this.say('FIRE ATTACK — scoop the lake, drop on the peat line');
     } else if (id === 2) {
       this.town.health = Math.max(this.town.health, 80);
       p.reset(-820, -260, 6, Math.PI * 0.5, 0);
@@ -55,7 +55,7 @@
       this.fires.addFire(T.TOWN.x - 60, T.TOWN.z - 170, 0.8);
       this.town.health = 55;
       p.reset(180, 60, 60, Math.PI * 0.9, 100);
-      this.say('TOWN DEFENSE — the fire is at the edge of Cedar Falls!');
+      this.say('TOWN DEFENSE — the peat fire is at the edge of Rimba Jaya!');
     }
   };
 

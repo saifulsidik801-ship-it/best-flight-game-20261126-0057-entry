@@ -20,13 +20,14 @@
   renderer.setClearColor(0x2a2140, 1);
 
   var scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0x9a6248, 650, 3000);
+  scene.fog = new THREE.Fog(0x8a5a44, 700, 2800); // thick kabut-asap haze
   var camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, 7000);
   camera.position.set(-560, 60, -620);
 
   // --- world ---
   scene.add(T.buildSkyDome());
   scene.add(T.buildClouds());
+  scene.add(T.buildHaze());
   scene.add(T.buildSunDisc());
   scene.add(T.buildTerrainMesh());
   scene.add(T.buildLakeMesh());
@@ -92,7 +93,7 @@
 
   function stageShot() {
     if (SHOT === 'cover') {
-      // Straight southwest run over the fire line toward Cedar Falls —
+      // Straight southwest run over the fire line toward Rimba Jaya —
       // no autopilot, so the plane holds its line for the title frame.
       missions.setupMission(1);
       physics.reset(430, 330, 75, -2.23, 60);
@@ -101,7 +102,7 @@
       hud.showTitle(true);
     } else if (SHOT === 'river') {
       // Scoop run tight against the eastern shore, angled southeast so
-      // the fire line's smoke and Cedar Falls sit in the background.
+      // the fire line's smoke and Rimba Jaya sit in the background.
       // The plane leaves the lake ~0.7 s before capture; the tank is
       // still filling, spray is still flying and SCOOPING… still shows.
       missions.setupMission(1);
@@ -120,7 +121,7 @@
       // Staged end screen: a short real mission the autopilot genuinely
       // flies and wins — 3 low-intensity fires (they do not spread),
       // full tank, plane already inbound. The fires sit on the town's
-      // edge so Cedar Falls (houses, water tower, fire trucks) is the
+      // edge so Rimba Jaya (houses, water tower, fire trucks) is the
       // backdrop behind the parked plane. Stats on screen are the sim's.
       missions.setupMission(1);
       fires.clear();
@@ -208,7 +209,7 @@
     // three-quarter silhouette and the valley ahead dominates — except
     // the cover, which is a front three-quarter: the camera sits ahead
     // of the nose looking back, so the cockpit, floats and red
-    // cheatline read, with the fire line and Cedar Falls behind.
+    // cheatline read, with the fire line and Rimba Jaya behind.
     var rx = -Math.cos(physics.heading), rz = Math.sin(physics.heading); // right vector
     var cx, cz, cy, lx, ly, lz;
     if (SHOT === 'cover') {

@@ -96,20 +96,30 @@
     glow.scale.set(42, 16, 1);
     glow.position.y = 3;
     g.add(glow);
-    // smoke column: 5 stacked puffs, bigger and thicker
+    // ember bed: the glowing peat itself, a flat orange pool under the flame
+    var bedMat = new THREE.SpriteMaterial({
+      map: this.puffTex, color: 0xff4a08, transparent: true, opacity: 0.6,
+      depthWrite: false, blending: THREE.AdditiveBlending, fog: false
+    });
+    var bed = new THREE.Sprite(bedMat);
+    bed.scale.set(36, 11, 1);
+    bed.position.y = 1.5;
+    g.add(bed);
+    // smoke column: 8 stacked puffs, taller and thicker — peat fires
+    // throw a heavy grey-brown column, not a thin wisp
     var smokes = [];
     var smokeMat = new THREE.SpriteMaterial({
-      map: this.puffTex, color: 0x453832, transparent: true, opacity: 0.5, depthWrite: false
+      map: this.puffTex, color: 0x4a3f38, transparent: true, opacity: 0.55, depthWrite: false
     });
-    for (var s = 0; s < 5; s++) {
+    for (var s = 0; s < 8; s++) {
       var sm = new THREE.Sprite(smokeMat);
-      sm.scale.set(16 + s * 8, 16 + s * 8, 1);
-      sm.position.set((this.rng() - 0.5) * 4, 16 + s * 13, (this.rng() - 0.5) * 4);
+      sm.scale.set(18 + s * 9, 18 + s * 9, 1);
+      sm.position.set((this.rng() - 0.5) * 5, 16 + s * 13, (this.rng() - 0.5) * 5);
       g.add(sm);
       smokes.push(sm);
     }
     this.group.add(g);
-    var fire = { x: x, z: z, intensity: intensity, radius: 14 + intensity * 10, group: g, flame: flame, glow: glow, smokes: smokes, seed: this.rng() * 10 };
+    var fire = { x: x, z: z, intensity: intensity, radius: 14 + intensity * 10, group: g, flame: flame, glow: glow, bed: bed, smokes: smokes, seed: this.rng() * 10 };
     this.fires.push(fire);
     return fire;
   };
@@ -214,12 +224,14 @@
       fire.flame.material.opacity = 0.25 + fire.intensity * 0.75;
       fire.glow.material.opacity = 0.18 + fire.intensity * 0.55;
       fire.glow.scale.set(34 + fire.intensity * 26, 14 + fire.intensity * 10, 1);
+      fire.bed.material.opacity = 0.2 + fire.intensity * 0.5;
+      fire.bed.scale.set(28 + fire.intensity * 18, 9 + fire.intensity * 6, 1);
       for (var s2 = 0; s2 < fire.smokes.length; s2++) {
         var sm2 = fire.smokes[s2];
         sm2.position.y += dt * 2.2;
         sm2.position.x += dt * 3.5; // wind drift
-        sm2.material.opacity = 0.22 + fire.intensity * 0.35;
-        if (sm2.position.y > 16 + s2 * 13 + 26) sm2.position.y = 16 + s2 * 13;
+        sm2.material.opacity = 0.25 + fire.intensity * 0.4;
+        if (sm2.position.y > 16 + s2 * 13 + 42) sm2.position.y = 16 + s2 * 13;
       }
       fire.group.visible = fire.intensity > 0.02;
     }

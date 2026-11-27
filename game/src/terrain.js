@@ -1,6 +1,7 @@
 // Ashwing — valley terrain. One job: the ground the game flies over.
-// A pine-forest valley at golden-hour dusk: a lake basin, a flat town
-// bench, fire-line clearings, and a ring of dark ridges. Exposes
+// An Indonesian peatland forest valley at golden-hour dusk: dark peat
+// soil, moss and dry-soil patches, a lake basin, a flat town bench,
+// burnt peat along the fire line, and a ring of dark ridges. Exposes
 // AshTerrain.heightAt(x, z) so physics, fires and the camera all agree
 // on where the ground is.
 (function (global) {
@@ -41,28 +42,64 @@
     var seg = 96;
     var geo = new THREE.PlaneGeometry(WORLD, WORLD, seg, seg);
     geo.rotateX(-Math.PI / 2);
+    // Peat mottle texture: a deterministic canvas of dark/light blotches
+    // tiled 4x4 over the valley so the ground reads as textured peat at
+    // every distance, not a flat colour wash. Vertex colours still ride
+    // on top for the large-scale zones (burn band, shore, town dirt).
+    var tc = document.createElement('canvas'); tc.width = 512; tc.height = 512;
+    var tg = tc.getContext('2d');
+    tg.fillStyle = '#c9c9c2'; tg.fillRect(0, 0, 512, 512);
+    var trng = R.makeRng(99);
+    var blotches = ['#5a6b42', '#3d4a2e', '#6b5a38', '#2e3a22', '#7a6a45', '#4a3a26', '#55663a', '#33291c'];
+    for (var bi = 0; bi < 900; bi++) {
+      var bx = trng() * 512, bz = trng() * 512, br = 4 + trng() * 26;
+      tg.fillStyle = blotches[Math.floor(trng() * blotches.length) % blotches.length];
+      tg.globalAlpha = 0.25 + trng() * 0.45;
+      tg.beginPath(); tg.ellipse(bx, bz, br, br * (0.5 + trng() * 0.7), trng() * Math.PI, 0, Math.PI * 2); tg.fill();
+    }
+    tg.globalAlpha = 1;
+    var groundTex = new THREE.CanvasTexture(tc);
+    groundTex.wrapS = THREE.RepeatWrapping; groundTex.wrapT = THREE.RepeatWrapping;
+    groundTex.repeat.set(4, 4);
     var pos = geo.attributes.position;
     var colors = new Float32Array(pos.count * 3);
-    var cValley = [0.18, 0.38, 0.13];
-    var cSlope = [0.15, 0.32, 0.11];
-    var cRock = [0.42, 0.34, 0.32];
-    var cScorch = [0.12, 0.10, 0.09];
+    var cValley = [0.13, 0.20, 0.09];   // dark peat floor
+    var cSlope = [0.11, 0.24, 0.10];    // mossy slope
+    var cRock = [0.38, 0.32, 0.30];
+    var cScorch = [0.07, 0.06, 0.05];   // burnt peat, near-black
     var cSand = [0.52, 0.44, 0.30];
+    var cDry = [0.34, 0.22, 0.10];      // dry soil patches
+    var cMoss = [0.05, 0.12, 0.05];     // deep moss patches
+    var cDirt = [0.32, 0.26, 0.17];     // packed dirt on the town bench
     var c = [0, 0, 0];
     for (var i = 0; i < pos.count; i++) {
       var x = pos.getX(i), z = pos.getZ(i);
       var h = heightAt(x, z);
       pos.setY(i, h);
       var n = (noise(x * 1.7 + 5, z * 1.7 + 9) + 1) * 0.5; // 0..1 patchiness
+      var n2 = (noise(x * 4.3 + 11, z * 4.3 + 7) + 1) * 0.5; // finer patchiness
       var t = R.clamp(h / 90, 0, 1);
       c[0] = R.lerp(R.lerp(cValley[0], cSlope[0], n), cRock[0], t);
       c[1] = R.lerp(R.lerp(cValley[1], cSlope[1], n), cRock[1], t);
       c[2] = R.lerp(R.lerp(cValley[2], cSlope[2], n), cRock[2], t);
+      // dry-soil and deep-moss patches break the floor into peat texture
+      if (n2 > 0.62) {
+        var pd = R.smoothstep(0.62, 0.85, n2) * 0.85;
+        c[0] = R.lerp(c[0], cDry[0], pd); c[1] = R.lerp(c[1], cDry[1], pd); c[2] = R.lerp(c[2], cDry[2], pd);
+      } else if (n2 < 0.30) {
+        var pm = R.smoothstep(0.30, 0.12, n2) * 0.75;
+        c[0] = R.lerp(c[0], cMoss[0], pm); c[1] = R.lerp(c[1], cMoss[1], pm); c[2] = R.lerp(c[2], cMoss[2], pm);
+      }
+      // packed dirt on the town bench so it is not flat olive
+      var tf = townFactor(x, z);
+      if (tf > 0.05) {
+        c[0] = R.lerp(c[0], cDirt[0], tf * 0.55); c[1] = R.lerp(c[1], cDirt[1], tf * 0.55); c[2] = R.lerp(c[2], cDirt[2], tf * 0.55);
+      }
       // scorched band along the fire line, between lake and town
       var fx = x - 120, fz = z - 220;
       var fd = Math.sqrt(fx * fx + fz * fz);
-      if (fd < 200 && h > 2) {
-        var s = R.smoothstep(200, 70, fd) * 0.6;
+      if (fd < 240 && h > 2) {
+        var s = R.smoothstep(240, 80, fd) * 0.7;
         c[0] = R.lerp(c[0], cScorch[0], s); c[1] = R.lerp(c[1], cScorch[1], s); c[2] = R.lerp(c[2], cScorch[2], s);
       }
       // sandy shore ring around the lake
@@ -75,7 +112,7 @@
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
-    var mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    var mat = new THREE.MeshLambertMaterial({ vertexColors: true, map: groundTex });
     return new THREE.Mesh(geo, mat);
   }
 
@@ -181,6 +218,36 @@
     return group;
   }
 
+  // Kabut asap: a few low grey-brown haze sheets far out on the horizon
+  // so the far forest fades into smoke instead of ending in a hard line.
+  // Kept far (900 m+) and high so they never drift into the foreground
+  // as blobs. Own rng stream; nothing else moves.
+  function buildHaze() {
+    var cv = document.createElement('canvas'); cv.width = 128; cv.height = 64;
+    var g = cv.getContext('2d');
+    var grad = g.createRadialGradient(64, 32, 4, 64, 32, 62);
+    grad.addColorStop(0, 'rgba(168,132,108,0.30)');
+    grad.addColorStop(0.6, 'rgba(150,116,96,0.15)');
+    grad.addColorStop(1, 'rgba(150,116,96,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, 128, 64);
+    var tex = new THREE.CanvasTexture(cv);
+    var hrng = R.makeRng(31337);
+    var group = new THREE.Group();
+    for (var i = 0; i < 6; i++) {
+      var mat = new THREE.SpriteMaterial({
+        map: tex, transparent: true, opacity: 0.35 + hrng() * 0.2,
+        depthWrite: false, fog: false
+      });
+      var s = new THREE.Sprite(mat);
+      var a = hrng() * Math.PI * 2;
+      var r = 900 + hrng() * 700;
+      s.position.set(Math.cos(a) * r, 120 + hrng() * 80, Math.sin(a) * r);
+      s.scale.set(300 + hrng() * 200, 50 + hrng() * 30, 1);
+      group.add(s);
+    }
+    return group;
+  }
+
   function buildSkyDome() {
     var geo = new THREE.SphereGeometry(3200, 24, 14);
     var mat = new THREE.ShaderMaterial({
@@ -250,7 +317,7 @@
     WORLD: WORLD, LAKE: LAKE, TOWN: TOWN, WATER_Y: WATER_Y,
     heightAt: heightAt, isOverLake: isOverLake,
     buildTerrainMesh: buildTerrainMesh, buildLakeMesh: buildLakeMesh, buildShore: buildShore,
-    buildGlintMesh: buildGlintMesh, buildClouds: buildClouds, buildSkyDome: buildSkyDome,
+    buildGlintMesh: buildGlintMesh, buildClouds: buildClouds, buildHaze: buildHaze, buildSkyDome: buildSkyDome,
     buildSunDisc: buildSunDisc, buildRidgeRing: buildRidgeRing,
     buildLights: buildLights
   };
