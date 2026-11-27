@@ -26,9 +26,11 @@
 
   // --- world ---
   scene.add(T.buildSkyDome());
+  scene.add(T.buildClouds());
   scene.add(T.buildSunDisc());
   scene.add(T.buildTerrainMesh());
   scene.add(T.buildLakeMesh());
+  scene.add(T.buildShore());
   scene.add(T.buildGlintMesh());
   scene.add(T.buildRidgeRing(rng));
   var lights = T.buildLights();
@@ -83,16 +85,27 @@
   var autopilot = false;
   var autoPhase = 'scoop';
 
+  // per-shot field of view: the scoop run gets a tighter lens so the
+  // plane and the shoreline read bigger and the lake stays a band.
+  camera.fov = SHOT === 'river' ? 55 : 62;
+  camera.updateProjectionMatrix();
+
   function stageShot() {
     if (SHOT === 'cover') {
+      // Straight southwest run over the fire line toward Cedar Falls —
+      // no autopilot, so the plane holds its line for the title frame.
       missions.setupMission(1);
-      physics.reset(-140, -300, 75, 0.46, 60);
-      physics.auto = { x: 120, z: 220, alt: 80 };
+      physics.reset(430, 330, 75, -2.23, 60);
+      physics.throttle = 0.55;
       shotTarget = 6;
       hud.showTitle(true);
     } else if (SHOT === 'river') {
+      // Scoop run tight against the eastern shore, angled southeast so
+      // the fire line's smoke and Cedar Falls sit in the background.
+      // The plane leaves the lake ~0.7 s before capture; the tank is
+      // still filling, spray is still flying and SCOOPING… still shows.
       missions.setupMission(1);
-      physics.reset(-820, -260, 6, Math.PI * 0.5, 0);
+      physics.reset(-250, -260, 6, Math.PI * 0.5 - 0.5, 0);
       physics.throttle = 0.6;
       shotTarget = 1.0; // settle mid-scoop, spray still flying
       flying = true; hud.showTitle(false);
@@ -106,12 +119,14 @@
     } else if (SHOT === 'landing') {
       // Staged end screen: a short real mission the autopilot genuinely
       // flies and wins — 3 low-intensity fires (they do not spread),
-      // full tank, plane already inbound. Stats on screen are the sim's.
+      // full tank, plane already inbound. The fires sit on the town's
+      // edge so Cedar Falls (houses, water tower, fire trucks) is the
+      // backdrop behind the parked plane. Stats on screen are the sim's.
       missions.setupMission(1);
       fires.clear();
-      fires.addFire(-60, 120, 0.5);
-      fires.addFire(20, 180, 0.5);
-      fires.addFire(90, 140, 0.5);
+      fires.addFire(330, 180, 0.5);
+      fires.addFire(390, 240, 0.5);
+      fires.addFire(310, 290, 0.5);
       physics.reset(-260, -60, 50, 0.86, 100);
       autoPhase = 'attack';
       autopilot = true;
@@ -168,7 +183,9 @@
     plane.position.copy(physics.pos);
     plane.rotation.y = physics.heading + Math.PI;
     plane.rotation.x = -physics.pitch;
-    plane.rotation.z = -physics.roll;
+    // the dusk drop reads flat level — a visual bank makes it dynamic.
+    // Physics is untouched; this is the mesh only, shot-staging only.
+    plane.rotation.z = -physics.roll - (SHOT === 'dusk' ? 0.38 : 0);
     var spin = dt * physics.speed * 0.9;
     plane.userData.props[0].rotation.z += spin;
     plane.userData.props[1].rotation.z += spin;
@@ -187,21 +204,36 @@
     for (var i = 0; i < trucks.length; i++) {
       trucks[i].userData.barMat.color.setHex(Math.floor(t * 2 + i) % 2 === 0 ? 0xff2a1e : 0x2a6bff);
     }
-    // chase camera: pulled back with a side offset so the airtanker reads
-    // as a three-quarter silhouette and the valley ahead dominates
-    var dist = SHOT === 'dusk' ? 15 : (SHOT === 'cover' ? 24 : (SHOT === 'river' ? 19 : 22));
-    var height = SHOT === 'dusk' ? 5 : (SHOT === 'river' ? 4.5 : 6.5);
+    // camera: chase with a side offset so the airtanker reads as a
+    // three-quarter silhouette and the valley ahead dominates — except
+    // the cover, which is a front three-quarter: the camera sits ahead
+    // of the nose looking back, so the cockpit, floats and red
+    // cheatline read, with the fire line and Cedar Falls behind.
     var rx = -Math.cos(physics.heading), rz = Math.sin(physics.heading); // right vector
-    var cx = physics.pos.x - fwd.x * dist + rx * 11;
-    var cz = physics.pos.z - fwd.z * dist + rz * 11;
-    var cy = physics.pos.y + height;
+    var cx, cz, cy, lx, ly, lz;
+    if (SHOT === 'cover') {
+      cx = physics.pos.x + fwd.x * 24 + rx * -10;
+      cz = physics.pos.z + fwd.z * 24 + rz * -10;
+      cy = physics.pos.y + 3.5;
+      lx = physics.pos.x; ly = physics.pos.y + 3; lz = physics.pos.z;
+    } else {
+      var dist = SHOT === 'dusk' ? 15 : (SHOT === 'river' ? 14 : 18);
+      var height = SHOT === 'dusk' ? 4.5 : (SHOT === 'river' ? 3.5 : 5.0);
+      var side = SHOT === 'river' ? 11 : 11;
+      cx = physics.pos.x - fwd.x * dist + rx * side;
+      cz = physics.pos.z - fwd.z * dist + rz * side;
+      cy = physics.pos.y + height;
+      lx = physics.pos.x + fwd.x * 34;
+      ly = physics.pos.y + (SHOT === 'river' ? 6 : (SHOT === 'landing' ? 4 : 1.5));
+      lz = physics.pos.z + fwd.z * 34;
+    }
     var ground = T.heightAt(cx, cz);
     if (cy < ground + 3) cy = ground + 3;
     var k = 1 - Math.exp(-3.2 * Math.max(dt, 0.001));
     camera.position.x += (cx - camera.position.x) * k;
     camera.position.y += (cy - camera.position.y) * k;
     camera.position.z += (cz - camera.position.z) * k;
-    camera.lookAt(physics.pos.x + fwd.x * 34, physics.pos.y + 1.5, physics.pos.z + fwd.z * 34);
+    camera.lookAt(lx, ly, lz);
     hud.update(physics, missions, fires);
     if (missions.done) hud.showEnd(true, missions.won, fires, missions);
   }

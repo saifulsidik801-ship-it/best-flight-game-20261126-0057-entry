@@ -7,6 +7,13 @@
   var R = global.AshRng;
   var T = global.AshTerrain;
 
+  // Deterministic 0..1 hash of a ground position — variety without
+  // consuming the shared rng, so town / fire placement never moves.
+  function hash01(x, z) {
+    var s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+    return s - Math.floor(s);
+  }
+
   function scatterPositions(rng, count, accept) {
     var out = [];
     var guard = 0;
@@ -45,10 +52,16 @@
       dummy.scale.setScalar(s); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
       trunks.setMatrixAt(i, dummy.matrix);
       dummy.position.set(x, h + (5 + 6.5) * s * 0.5 + 2.5 * s, z);
-      dummy.scale.setScalar(s); dummy.rotation.set(0, R.range(rng, 0, 6.28), 0); dummy.updateMatrix();
+      // varied silhouettes: some tall and thin, some short and wide —
+      // no more rows of identical cones.
+      var hh = hash01(x, z), hh2 = hash01(z, x);
+      dummy.scale.set(s * (0.75 + 0.5 * hh), s * (0.85 + 0.6 * hh2), s * (0.75 + 0.5 * hh));
+      dummy.rotation.set(0, R.range(rng, 0, 6.28), 0); dummy.updateMatrix();
       fols.setMatrixAt(i, dummy.matrix);
       var g = R.range(rng, 0.9, 1.35);
-      col.setRGB(0.13 * g, 0.32 * g, 0.11 * g);
+      if (hh < 0.16) col.setRGB(0.48 * g, 0.30 * g, 0.09 * g);       // autumn orange
+      else if (hh < 0.30) col.setRGB(0.38 * g, 0.40 * g, 0.10 * g);  // yellow-green
+      else col.setRGB(0.13 * g, 0.32 * g, 0.11 * g);
       fols.setColorAt(i, col);
     }
     trunks.instanceMatrix.needsUpdate = true;

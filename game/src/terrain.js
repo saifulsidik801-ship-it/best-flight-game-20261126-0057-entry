@@ -106,6 +106,81 @@
     return m;
   }
 
+  // Shoreline dressing: reeds and boulders ringing the lake's edge so
+  // the waterline reads as a place, not a flat disc. Uses its own
+  // local rng stream — the shared rng (forest / town / fires) is
+  // untouched, so no other staging moves.
+  function buildShore() {
+    var group = new THREE.Group();
+    var srng = R.makeRng(4242);
+    var dummy = new THREE.Object3D();
+    var reedGeo = new THREE.CylinderGeometry(0.06, 0.16, 4.2, 4);
+    var reedMat = new THREE.MeshLambertMaterial({ color: 0x8a7a3a });
+    var reeds = new THREE.InstancedMesh(reedGeo, reedMat, 150);
+    for (var i = 0; i < 150; i++) {
+      var a = srng() * Math.PI * 2;
+      var rr = 0.97 + srng() * 0.08;
+      var x = LAKE.x + Math.cos(a) * LAKE.rx * rr;
+      var z = LAKE.z + Math.sin(a) * LAKE.rz * rr;
+      var h = heightAt(x, z);
+      var s = 0.7 + srng() * 0.9;
+      dummy.position.set(x, Math.max(0.5, h) + 1.6 * s, z);
+      dummy.scale.set(1, s, 1);
+      dummy.rotation.set((srng() - 0.5) * 0.25, 0, (srng() - 0.5) * 0.25);
+      dummy.updateMatrix();
+      reeds.setMatrixAt(i, dummy.matrix);
+    }
+    reeds.instanceMatrix.needsUpdate = true;
+    group.add(reeds);
+    var rockGeo = new THREE.DodecahedronGeometry(1.6, 0);
+    var rockMat = new THREE.MeshLambertMaterial({ color: 0x6a655e, flatShading: true });
+    var rocks = new THREE.InstancedMesh(rockGeo, rockMat, 46);
+    for (var j = 0; j < 46; j++) {
+      var b = srng() * Math.PI * 2;
+      var r2 = 0.99 + srng() * 0.07;
+      var rx2 = LAKE.x + Math.cos(b) * LAKE.rx * r2;
+      var rz2 = LAKE.z + Math.sin(b) * LAKE.rz * r2;
+      var h2 = heightAt(rx2, rz2);
+      var s2 = 0.6 + srng() * 1.6;
+      dummy.position.set(rx2, Math.max(0.4, h2) + 0.4 * s2, rz2);
+      dummy.scale.setScalar(s2);
+      dummy.rotation.set(0, srng() * Math.PI, 0);
+      dummy.updateMatrix();
+      rocks.setMatrixAt(j, dummy.matrix);
+    }
+    rocks.instanceMatrix.needsUpdate = true;
+    group.add(rocks);
+    return group;
+  }
+
+  // Dusk clouds: big soft sprites high over the valley so the upper
+  // frame is never flat empty sky. Own rng stream; nothing else moves.
+  function buildClouds() {
+    var cv = document.createElement('canvas'); cv.width = 128; cv.height = 64;
+    var g = cv.getContext('2d');
+    var grad = g.createRadialGradient(64, 32, 4, 64, 32, 62);
+    grad.addColorStop(0, 'rgba(255,220,200,0.55)');
+    grad.addColorStop(0.6, 'rgba(220,170,160,0.28)');
+    grad.addColorStop(1, 'rgba(220,170,160,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, 128, 64);
+    var tex = new THREE.CanvasTexture(cv);
+    var crng = R.makeRng(777);
+    var group = new THREE.Group();
+    for (var i = 0; i < 14; i++) {
+      var mat = new THREE.SpriteMaterial({
+        map: tex, transparent: true, opacity: 0.5 + crng() * 0.25,
+        depthWrite: false, fog: false
+      });
+      var s = new THREE.Sprite(mat);
+      var a = crng() * Math.PI * 2;
+      var r = 900 + crng() * 800;
+      s.position.set(Math.cos(a) * r, 260 + crng() * 160, Math.sin(a) * r);
+      s.scale.set(320 + crng() * 260, 90 + crng() * 70, 1);
+      group.add(s);
+    }
+    return group;
+  }
+
   function buildSkyDome() {
     var geo = new THREE.SphereGeometry(3200, 24, 14);
     var mat = new THREE.ShaderMaterial({
@@ -174,8 +249,8 @@
   global.AshTerrain = {
     WORLD: WORLD, LAKE: LAKE, TOWN: TOWN, WATER_Y: WATER_Y,
     heightAt: heightAt, isOverLake: isOverLake,
-    buildTerrainMesh: buildTerrainMesh, buildLakeMesh: buildLakeMesh,
-    buildGlintMesh: buildGlintMesh, buildSkyDome: buildSkyDome,
+    buildTerrainMesh: buildTerrainMesh, buildLakeMesh: buildLakeMesh, buildShore: buildShore,
+    buildGlintMesh: buildGlintMesh, buildClouds: buildClouds, buildSkyDome: buildSkyDome,
     buildSunDisc: buildSunDisc, buildRidgeRing: buildRidgeRing,
     buildLights: buildLights
   };

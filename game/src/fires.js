@@ -46,7 +46,7 @@
     var geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
     var mat = new THREE.PointsMaterial({
-      size: 1.6, color: 0xffa030, transparent: true, opacity: 0.9,
+      size: 2.4, map: this.puffTex, color: 0xffa030, transparent: true, opacity: 0.9,
       blending: THREE.AdditiveBlending, depthWrite: false
     });
     this.embers = new THREE.Points(geo, mat);
@@ -54,12 +54,13 @@
     this.emberParts = [];
     for (var i = 0; i < N; i++) this.emberParts.push({ x: 0, y: -100, z: 0, vy: 0, life: 0, fx: 0, fz: 0 });
     scene.add(this.embers);
-    // water-drop burst particles (reused pool)
+    // burst particles: bigger drops, longer life so the burst is still
+    // at its peak when the dusk shot is taken
     var M = 160;
     var bgeo = new THREE.BufferGeometry();
     bgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(M * 3), 3));
     var bmat = new THREE.PointsMaterial({
-      size: 3.4, color: 0xbfe6ff, transparent: true, opacity: 0.95, depthWrite: false
+      size: 5.0, map: this.puffTex, color: 0xbfe6ff, transparent: true, opacity: 0.95, depthWrite: false
     });
     this.burst = new THREE.Points(bgeo, bmat);
     this.burst.frustumCulled = false;
@@ -95,14 +96,14 @@
     glow.scale.set(42, 16, 1);
     glow.position.y = 3;
     g.add(glow);
-    // smoke column: 5 stacked puffs
+    // smoke column: 5 stacked puffs, bigger and thicker
     var smokes = [];
     var smokeMat = new THREE.SpriteMaterial({
       map: this.puffTex, color: 0x453832, transparent: true, opacity: 0.5, depthWrite: false
     });
     for (var s = 0; s < 5; s++) {
       var sm = new THREE.Sprite(smokeMat);
-      sm.scale.set(14 + s * 7, 14 + s * 7, 1);
+      sm.scale.set(16 + s * 8, 16 + s * 8, 1);
       sm.position.set((this.rng() - 0.5) * 4, 16 + s * 13, (this.rng() - 0.5) * 4);
       g.add(sm);
       smokes.push(sm);
@@ -143,17 +144,17 @@
     for (var j = 0; j < this.burstParts.length; j++) {
       var p = this.burstParts[j];
       if (p.life <= 0) {
-        p.x = x + (Math.random() - 0.5) * 30;
+        p.x = x + (Math.random() - 0.5) * 40;
         p.y = T.heightAt(x, z) + 26 + Math.random() * 10;
-        p.z = z + (Math.random() - 0.5) * 30;
+        p.z = z + (Math.random() - 0.5) * 40;
         p.vx = (Math.random() - 0.5) * 14;
-        p.vy = -18 - Math.random() * 14;
+        p.vy = -14 - Math.random() * 16;
         p.vz = (Math.random() - 0.5) * 14;
-        p.life = 0.7 + Math.random() * 0.5;
+        p.life = 1.0 + Math.random() * 0.8;
       }
     }
     // steam
-    for (var s = 0; s < 6; s++) {
+    for (var s = 0; s < 10; s++) {
       var mat = new THREE.SpriteMaterial({
         map: this.puffTex, color: 0xdde8ee, transparent: true, opacity: 0.38, depthWrite: false
       });
@@ -207,16 +208,17 @@
     for (var q = 0; q < this.fires.length; q++) {
       var fire = this.fires[q];
       var fl = 0.75 + 0.25 * Math.sin(t * 7 + fire.seed * 9) * Math.sin(t * 3.1 + fire.seed);
-      var sc = (18 + fire.intensity * 22) * fl;
+      // per-fire size variety (seed is fixed per fire) + a brighter core
+      var sc = (20 + fire.intensity * 26) * fl * (0.85 + (fire.seed % 1) * 0.4);
       fire.flame.scale.set(sc, sc * 1.3, 1);
       fire.flame.material.opacity = 0.25 + fire.intensity * 0.75;
-      fire.glow.material.opacity = 0.12 + fire.intensity * 0.45;
-      fire.glow.scale.set(30 + fire.intensity * 22, 12 + fire.intensity * 8, 1);
+      fire.glow.material.opacity = 0.18 + fire.intensity * 0.55;
+      fire.glow.scale.set(34 + fire.intensity * 26, 14 + fire.intensity * 10, 1);
       for (var s2 = 0; s2 < fire.smokes.length; s2++) {
         var sm2 = fire.smokes[s2];
         sm2.position.y += dt * 2.2;
         sm2.position.x += dt * 3.5; // wind drift
-        sm2.material.opacity = 0.16 + fire.intensity * 0.3;
+        sm2.material.opacity = 0.22 + fire.intensity * 0.35;
         if (sm2.position.y > 16 + s2 * 13 + 26) sm2.position.y = 16 + s2 * 13;
       }
       fire.group.visible = fire.intensity > 0.02;
@@ -227,7 +229,7 @@
       var ep = this.emberParts[e];
       if (ep.life <= 0) {
         var bf = this.fires[Math.floor(Math.random() * this.fires.length)];
-        if (bf && bf.intensity > 0.3 && Math.random() < 0.5) {
+        if (bf && bf.intensity > 0.3 && Math.random() < 0.7) {
           ep.x = bf.x + (Math.random() - 0.5) * 12;
           ep.y = T.heightAt(bf.x, bf.z) + 4;
           ep.z = bf.z + (Math.random() - 0.5) * 12;
